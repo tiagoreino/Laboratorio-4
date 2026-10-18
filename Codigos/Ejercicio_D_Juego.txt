@@ -1,0 +1,253 @@
+#define F_CPU 16000000UL
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <avr/pgmspace.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <avr/interrupt.h>
+
+#define WS2812_PIN PD3 // Pin datos matriz (6)
+#define WS2812_DDR DDRH  // Registro dirección Puerto H
+#define WS2812_PORT PORTH  // Registro salida Puerto H
+
+#define NUM_LEDS 64 
+
+// Estructura color RGB en orden GRB (formato interno WS2812)
+typedef struct {
+	uint8_t g;
+	uint8_t r;
+	uint8_t b;
+} cRGB;
+
+cRGB leds[NUM_LEDS]; // Búfer memoria de 64 LEDs
+
+// Envío bit a bit con temporización estricta por ensamblador inline (a 16 MHz)
+void ws2812_send_byte(uint8_t b) {
+	for (uint8_t i = 0; i < 8; i++) {
+		if (b & 0x80) {
+			// Bit 1 (Pulso alto 700ns, bajo 600ns)
+			WS2812_PORT |= (1 << WS2812_PIN); // se enciende el pin
+			asm volatile ("nop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\t"); // Se queda congelado (nanosegundos)
+			WS2812_PORT &= ~(1 << WS2812_PIN); // Se apaga el pin
+			asm volatile ("nop\n\tnop\n\t"); // Mini espera antes de enviar siguente señal
+			} else {
+			// Bit 0 ( Pulso alto 350ns, bajo 800ns)
+			WS2812_PORT |= (1 << WS2812_PIN);
+			asm volatile ("nop\n\tnop\n\t");
+			WS2812_PORT &= ~(1 << WS2812_PIN);
+			asm volatile ("nop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\t");
+		}
+		b <<= 1;
+	}
+}
+
+// Envía trama completa de búfer hacia matriz, desactiva interrupciones
+void ws2812_show(void) {
+	cli(); // Desactiva interrupciones para no alterar tiempos
+	for (uint16_t i = 0; i < NUM_LEDS; i++) {
+		ws2812_send_byte(leds[i].g);
+		ws2812_send_byte(leds[i].r);
+		ws2812_send_byte(leds[i].b);
+	}
+	sei(); // Reactivar interrupciones
+	_delay_us(60); // Senal Reset, fija colores
+}
+
+// Apaga 64 LEDs de la matriz
+void ws2812_clear(void) {
+	for (uint16_t i = 0; i < NUM_LEDS; i++) {
+		leds[i].r = 0;
+		leds[i].g = 0;
+		leds[i].b = 0;
+	}
+	ws2812_show();
+}
+
+// Muestra "boton" Amarillo
+void ws2812_Amarillo() {
+	
+	uint8_t r = 254;
+	uint8_t g = 231;
+	uint8_t b = 97;
+	
+	for (uint8_t i = 2; i <= 12; i++) {
+		if (i == 6){
+			i += 5;
+		}else{
+			leds[i].r = r;
+			leds[i].g = g;
+			leds[i].b = b;
+			}
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
+// Muestra "boton" Verde
+void ws2812_Verde() {
+	
+	uint8_t r = 99;
+	uint8_t g = 199;
+	uint8_t b = 77;
+	
+	for (uint8_t i = 0; i <= 17; i++) {
+		if (i == 2){
+			i += 6;
+			}else{
+				if (i == 11){
+					i += 6;
+				}else{
+					leds[i].r = r;
+					leds[i].g = g;
+					leds[i].b = b;
+			}
+		}
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
+// Muestra "boton" Naranja
+void ws2812_Naranja() {
+	
+	uint8_t r = 254;
+	uint8_t g = 174;
+	uint8_t b = 52;
+	
+	for (uint8_t i = 6; i <= 22; i++) {
+		if (i == 8){
+			i += 5;
+			}else{
+				if (i == 16){
+					i += 6;
+				}else{
+					leds[i].r = r;
+					leds[i].g = g;
+					leds[i].b = b;
+				}
+		}
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
+// Muestra "boton" Rojillo
+void ws2812_Rojillo() {
+	
+	uint8_t r = 228;
+	uint8_t g = 59;
+	uint8_t b = 68;
+	
+	for (uint8_t i = 23; i <= 47; i++) {
+		if (i == 24){
+			i += 6;
+		}else{
+			if (i == 32){
+				i += 6;
+			}else{
+				if (i == 40){
+					i += 7;
+				}else{
+					leds[i].r = r;
+					leds[i].g = g;
+					leds[i].b = b;
+				}
+			}	
+		}	
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
+// Muestra "boton" Rojo
+void ws2812_Rojo() {
+	
+	uint8_t r = 162;
+	uint8_t g = 38;
+	uint8_t b = 51;
+	
+	for (uint8_t i = 36; i <= 63; i++) {
+		if (i == 47){
+			i += 6;
+			}else{
+				if (i == 56){
+					i += 6;
+				}else{
+					leds[i].r = r;
+					leds[i].g = g;
+					leds[i].b = b;
+				}
+		}
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
+// Muestra "boton" Verde Oscuro
+void ws2812_VerdeOscuro() {
+	
+	uint8_t r = 25;
+	uint8_t g = 60;
+	uint8_t b = 62;
+	
+	for (uint8_t i = 16; i <= 40; i++) {
+		if (i == 17){
+			i += 7;
+			}else{
+				if (i == 26){
+					i += 6;
+				}else{
+					if (i == 34){
+						i += 6;
+						}else{
+							leds[i].r = r;
+							leds[i].b = b;
+							leds[i].g = g;
+						}
+				}
+			}
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
+// Muestra "boton" Azul
+void ws2812_Azul() {
+	
+	uint8_t r = 18;
+	uint8_t g = 78;
+	uint8_t b = 137;
+	
+	for (uint8_t i = 41; i <= 57; i++) {
+		if (i == 42){
+			i += 6;
+			}else{
+			if (i == 51){
+				i += 5;
+				}else{
+					leds[i].r = r;
+					leds[i].b = b;
+					leds[i].g = g;
+				}
+			}
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
+
+// Muestra "boton" Violeta
+void ws2812_Violeta() {
+	
+	uint8_t r = 104;
+	uint8_t g = 56;
+	uint8_t b = 108;
+	
+	for (uint8_t i = 51; i <= 61; i++) {
+		if (i == 53){
+			i += 5;
+			}else{
+				leds[i].r = r;
+				leds[i].b = b;
+				leds[i].g = g;
+			}
+		}
+	}
+	ws2812_show(); // Refrescaa la matriz
+}
+
