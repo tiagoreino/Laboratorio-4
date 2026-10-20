@@ -1,0 +1,322 @@
+/*Principal función del código : conocer los UIDs reales de las tarjetas, y mostrarlos por el Monitor Serial*/
+#define F_CPU 16000000UL
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <stdint.h>
+
+// UART
+#define BAUD 9600
+#define UBRR_VALOR ((F_CPU / 16 / BAUD) - 1)
+
+// RC522
+#define RC522_SS   PB2
+#define RC522_RST  PB1
+
+// Registros MFRC522
+#define CommandReg      0x01
+#define ComIrqReg       0x04
+#define ErrorReg        0x06
+#define FIFODataReg     0x09
+#define FIFOLevelReg    0x0A
+#define ControlReg      0x0C
+#define BitFramingReg   0x0D
+#define ModeReg         0x11
+#define TxControlReg    0x14
+#define TxASKReg        0x15
+#define TModeReg        0x2A
+#define TPrescalerReg   0x2B
+#define TReloadRegH     0x2C
+#define TReloadRegL     0x2D
+#define VersionReg      0x37
+
+#define PCD_IDLE        0x00
+#define PCD_TRANSCEIVE  0x0C
+#define PCD_RESETPHASE  0x0F
+
+void UART_Init(void)
+{
+	UBRR0H = (uint8_t)(UBRR_VALOR >> 8);
+	UBRR0L = (uint8_t)UBRR_VALOR;
+
+	UCSR0B = (1 << TXEN0);
+	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+void UART_Char(char c)
+{
+	while (!(UCSR0A & (1 << UDRE0)));
+	UDR0 = c;
+}
+
+void UART_Text(const char *s)
+{
+	while (*s) UART_Char(*s++);
+}
+
+void UART_Hex(uint8_t n)
+{
+	const char hex[] = "0123456789ABCDEF";
+	UART_Char(hex[n >> 4]);
+	UART_Char(hex[n & 0x0F]);
+}
+
+uint8_t SPI_Transfer(uint8_t data)
+{
+	SPDR = data;
+	while (!(SPSR & (1 << SPIF)));
+	return SPDR;
+}
+
+void SPI_Init(void)
+{
+	DDRB |= (1 << PB2) | (1 << PB3) |
+	(1 << PB5) | (1 << RC522_RST);
+
+	DDRB &= ~(1 << PB4);
+
+	PORTB |= (1 << RC522_SS);
+	PORTB |= (1 << RC522_RST);
+
+	SPCR = (1 << SPE) | (1 << MSTR) |
+	(1 << SPR0);
+}
+
+void RC522_Write(uint8_t reg, uint8_t value)
+{
+	PORTB &= ~(1 << RC522_SS);
+
+	SPI_Transfer((reg << 1) & 0x7E);
+	SPI_Transfer(value);
+
+	PORTB |= (1 << RC522_SS);
+}
+
+uint8_t RC522_Read(uint8_t reg)
+{
+	uint8_t value;
+
+	PORTB &= ~(1 << RC522_SS);
+
+	SPI_Transfer(((reg << 1) & 0x7E) | 0x80);
+	value = SPI_Transfer(0x00);
+
+	PORTB |= (1 << RC522_SS);
+
+	return value;
+}
+
+void RC522_SetBits(uint8_t reg, uint8_t mask)
+{
+	RC522_Write(reg, RC522_Read(reg) | mask);
+}
+
+void RC522_ClearBits(uint8_t reg, uint8_t mask)
+{
+	RC522_Write(reg, RC522_Read(reg) & ~mask);
+}
+
+void RC522_AntennaOn(void)
+{
+	uint8_t value = RC522_Read(TxControlReg);
+
+	if (!(value & 0x03))
+	RC522_SetBits(TxControlReg, 0x03);
+}
+
+void RC522_Init(void)
+{
+	PORTB &= ~(1 << RC522_RST);
+	_delay_ms(10);
+
+	PORTB |= (1 << RC522_RST);
+	_delay_ms(50);
+
+	RC522_Write(CommandReg, PCD_RESETPHASE);
+	_delay_ms(50);
+
+	RC522_Write(TModeReg, 0x80);
+	RC522_Write(TPrescalerReg, 0xA9);
+	RC522_Write(TReloadRegH, 0x03);
+	RC522_Write(TReloadRegL, 0xE8);
+
+	RC522_Write(TxASKReg, 0x40);
+	RC522_Write(ModeReg, 0x3D);
+
+	RC522_AntennaOn();
+}
+
+// Ejecuta un intercambio con timeout acotado.
+uint8_t RC522_ToCard(
+uint8_t command,
+uint8_t *sendData,
+uint8_t sendLen,
+uint8_t *backData,
+uint8_t *backLen,
+uint8_t *validBits)
+{
+	uint8_t irqEn = 0x77;
+	uint8_t waitIRq = 0x30;
+
+	RC522_Write(ComIrqReg, 0x7F);
+	RC522_Write(CommandReg, PCD_IDLE);
+	RC522_Write(FIFOLevelReg, 0x80);
+
+	for (uint8_t i = 0; i < sendLen; i++)
+	RC522_Write(FIFODataReg, sendData[i]);
+
+	RC522_Write(CommandReg, command);
+
+	if (command == PCD_TRANSCEIVE)
+	RC522_SetBits(BitFramingReg, 0x80);
+
+	uint16_t timeout = 2000;
+	uint8_t irq;
+
+	do {
+		irq = RC522_Read(ComIrqReg);
+		_delay_us(50);
+	} while (!(irq & (waitIRq | 0x01)) && --timeout);
+
+	RC522_ClearBits(BitFramingReg, 0x80);
+
+	if (timeout == 0 || (irq & 0x01))
+	return 0;
+
+	if (RC522_Read(ErrorReg) & 0x13)
+	return 0;
+
+	uint8_t count = RC522_Read(FIFOLevelReg);
+	uint8_t bits = RC522_Read(ControlReg) & 0x07;
+
+	if (validBits) *validBits = bits;
+
+	if (count > *backLen)
+	return 0;
+
+	*backLen = count;
+
+	for (uint8_t i = 0; i < count; i++)
+	backData[i] = RC522_Read(FIFODataReg);
+
+	return 1;
+}
+
+uint8_t RC522_Request(void)
+{
+	uint8_t cmd = 0x26; // REQA
+	uint8_t response[2];
+	uint8_t len = sizeof(response);
+	uint8_t bits = 0;
+
+	RC522_Write(BitFramingReg, 0x07);
+
+	if (!RC522_ToCard(PCD_TRANSCEIVE,
+	&cmd, 1,
+	response, &len, &bits))
+	return 0;
+
+	return (len == 2 && bits == 0);
+}
+
+// Lee UID de 4 bytes mediante anticollision CL1.
+// No resuelve UID de 7 o 10 bytes.
+uint8_t RC522_ReadUID(uint8_t uid[4])
+{
+	uint8_t cmd[2] = {0x93, 0x20};
+	uint8_t response[5];
+	uint8_t len = sizeof(response);
+	uint8_t bits = 0;
+
+	RC522_Write(BitFramingReg, 0x00);
+
+	if (!RC522_ToCard(PCD_TRANSCEIVE,
+	cmd, 2,
+	response, &len, &bits))
+	return 0;
+
+	if (len != 5 || bits != 0)
+	return 0;
+
+	uint8_t bcc = response[0] ^ response[1] ^
+	response[2] ^ response[3];
+
+	if (bcc != response[4])
+	return 0;
+
+	// 0x88 es el byte de cascada, no un UID.
+	if (response[0] == 0x88)
+	return 0;
+
+	for (uint8_t i = 0; i < 4; i++)
+	uid[i] = response[i];
+
+	return 1;
+}
+
+int main(void)
+{
+	UART_Init();
+	SPI_Init();
+	RC522_Init();
+
+	_delay_ms(100);
+
+	UART_Text("\r\n=== LECTOR UID RC522 ===\r\n");
+
+	UART_Text("Version RC522: 0x");
+	uint8_t version = RC522_Read(VersionReg);
+	UART_Hex(version);
+	UART_Text("\r\n");
+
+	if (version == 0x00 || version == 0xFF)
+	UART_Text("ERROR: verificar SPI y alimentacion\r\n");
+
+	UART_Text("Acercar tarjeta...\r\n");
+
+	uint8_t uid[4];
+	uint8_t ultimoUID[4] = {0};
+	uint8_t tarjetaAnterior = 0;
+
+	while (1)
+	{
+		if (RC522_Request() && RC522_ReadUID(uid))
+		{
+			uint8_t diferente = !tarjetaAnterior;
+
+			for (uint8_t i = 0; i < 4; i++)
+			{
+				if (uid[i] != ultimoUID[i])
+				diferente = 1;
+			}
+
+			if (diferente)
+			{
+				UART_Text("\r\nUID: ");
+
+				for (uint8_t i = 0; i < 4; i++)
+				{
+					UART_Hex(uid[i]);
+					if (i < 3) UART_Char(' ');
+					ultimoUID[i] = uid[i];
+				}
+
+				UART_Text("\r\nUID HEX: ");
+
+				for (uint8_t i = 0; i < 4; i++)
+				UART_Hex(uid[i]);
+
+				UART_Text("\r\n");
+			}
+
+			tarjetaAnterior = 1;
+		}
+		else
+		{
+			tarjetaAnterior = 0;
+		}
+
+		_delay_ms(200);
+	}
+}
+

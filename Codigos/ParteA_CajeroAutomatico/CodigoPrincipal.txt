@@ -1,0 +1,92 @@
+/*
+ * CAJERO AUTOMATICO 
+ *
+ * UART PD0/PD1, 9600 8N1. ENABLE1, ENABLE0, STATUS.
+ * Teclado: filas PD2..PD5; columnas PC0..PC3.
+ * LED rojo PD6, buzzer activo PD7, LED verde PB0.
+ * RC522: RST PB1, CS PB2, MOSI PB3, MISO PB4, SCK PB5.
+ * LCD PCF8574 0x27: SDA PC4, SCL PC5.
+ *
+ * Cuentas iniciales: F37E192D - PIN: 1234 - Saldo: 1000
+ * Cuentas iniciales: 03C83028 - PIN: 0007 - Saldo: 2500
+ * Cuentas iniciales: 65B29AE3 - PIN: 4321 - Saldo: 500
+ * A : saldo, B : deposito, C : retiro, D : salir.
+ * # - confirma; * - borra. Arranque SPI
+ * ENABLE1 para simular UID por UART.
+ * RC522: se admite version 0xB2 observada en el lector fisico.
+ */
+
+/* ====================================================================
+ * CONFIGURACION
+ * ==================================================================== */
+#ifndef CONFIG_H
+#define CONFIG_H
+#ifndef F_CPU
+#define F_CPU 16000000UL
+#endif
+#include <stdint.h>
+#include <string.h>
+#define LCD_ADDRESS 0x27
+#define ACCOUNT_COUNT 3
+#define MAX_BALANCE UINT32_C(999999999)
+#define SESSION_MS UINT32_C(120000)
+#define LOCK_MS UINT32_C(30000)
+#endif
+
+/* ====================================================================
+ * DECLARACIONES UART, SPI, TWI, TECLADO Y SALIDAS
+ * ==================================================================== */
+#ifndef HAL_H
+#define HAL_H
+
+void hal_init(void);
+uint32_t millis(void);
+void uart_puts(const char *s);
+void uart_u32(uint32_t n);
+int16_t uart_get(void);
+uint8_t uart_fault(void);
+uint8_t spi_transfer(uint8_t tx, uint8_t *rx);
+void spi_select(uint8_t active);
+uint8_t twi_write(uint8_t address, uint8_t data);
+char keypad_poll(void);
+void indicate(uint8_t success, uint16_t duration);
+void alarm_start(void);
+void indicators_task(void);
+#endif
+
+/* ====================================================================
+ * DECLARACIONES LCD
+ * ==================================================================== */
+#ifndef LCD_H
+#define LCD_H
+
+uint8_t lcd_init(void);
+uint8_t lcd_ok(void);
+void lcd_lines(const char *first,const char *second);
+void lcd_number(char *dest,uint32_t n);
+#endif
+
+/* ====================================================================
+ * DECLARACIONES CUENTAS Y EEPROM
+ * ==================================================================== */
+#ifndef ACCOUNTS_H
+#define ACCOUNTS_H
+
+typedef struct {uint8_t uid[4];char pin[4];uint32_t balance;} Account;
+extern Account accounts[ACCOUNT_COUNT];
+uint8_t accounts_init(void);
+int8_t accounts_find(const uint8_t uid[4]);
+uint8_t accounts_save(uint8_t index,uint32_t balance);
+uint8_t accounts_task(void); /* 0 pendiente/inactivo, 1 confirmado, 2 error */
+#endif
+
+/* ====================================================================
+ * DECLARACIONES RFID
+ * ==================================================================== */
+#ifndef MFRC522_H
+#define MFRC522_H
+
+uint8_t rfid_init(void);
+uint8_t rfid_present(void);
+uint8_t rfid_uid(uint8_t uid[4]); /* 0 sin tarjeta/error; 1 UID4; 2 UID largo */
+#endif

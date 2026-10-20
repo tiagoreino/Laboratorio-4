@@ -1,0 +1,3 @@
+Cuentas iniciales para simular por UART: 
+RFID - F37E192D/ PIN - 1234/ SALDO - 1000; 
+RFID - 03C83028/ PIN - 0007/ SALDP - 2500
