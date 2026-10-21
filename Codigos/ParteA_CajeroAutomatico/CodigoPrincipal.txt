@@ -90,3 +90,384 @@ uint8_t rfid_init(void);
 uint8_t rfid_present(void);
 uint8_t rfid_uid(uint8_t uid[4]); /* 0 sin tarjeta/error; 1 UID4; 2 UID largo */
 #endif
+
+/* ====================================================================
+ * PERIFERICOS Y TEMPORIZACION
+ * ==================================================================== */
+/* Perifericos del ATmega328P. No depende del framework Arduino. */
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/atomic.h>
+#include <util/delay.h>
+static volatile uint32_t ticks;
+static volatile uint8_t rx[128], head, tail, rx_error;
+static uint32_t led_until, alarm_until;
+static uint8_t led_on, alarm_on;
+/* Interrupcion de 1 ms: base temporal del programa. */
+ISR(TIMER0_COMPA_vect) { ticks++; }
+/* Interrupcion RX: almacena bytes sin bloquear y detecta errores. */
+ISR(USART_RX_vect) {
+    uint8_t status=UCSR0A, c=UDR0, next=(head+1)&127;
+    if ((status&(_BV(FE0)|_BV(DOR0)|_BV(UPE0))) || next==tail) rx_error=1;
+    else { rx[head]=c; head=next; }
+}
+/* Lee atomica y coherentemente el contador de milisegundos. */
+uint32_t millis(void) { uint32_t n; ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {n=ticks;} return n; }
+/* Retorna 1 si todavia no se alcanzo la fecha limite (con rollover). */
+static uint8_t before(uint32_t deadline) {return (int32_t)(millis()-deadline)<0;}
+/* Configura GPIO, UART, SPI, TWI y Timer0 de 1 ms; habilita IRQ. */
+void hal_init(void) {
+    /* PD2..5 quedan como entradas salvo la fila activa. */
+    DDRD=_BV(PD1)|_BV(PD6)|_BV(PD7); PORTD=0;
+    DDRB=_BV(PB0)|_BV(PB1)|_BV(PB2)|_BV(PB3)|_BV(PB5);
+    PORTB=_BV(PB1)|_BV(PB2); /* reset y CS del lector inactivos */
+    DDRC=0; PORTC=0x3f; /* teclado: pull-up; TWI: tambien externos en hardware */
+    UBRR0H=0; UBRR0L=103; /* 9615 baud: error +0.16% */
+    UCSR0A=0; UCSR0B=_BV(RXEN0)|_BV(TXEN0)|_BV(RXCIE0);
+    UCSR0C=_BV(UCSZ01)|_BV(UCSZ00);
+    SPCR=_BV(SPE)|_BV(MSTR)|_BV(SPR0); SPSR=0; /* modo 0, 1 MHz */
+    TWSR=0; TWBR=72; TWCR=_BV(TWEN); /* 100 kHz */
+    TCCR0A=_BV(WGM01); TCCR0B=_BV(CS01)|_BV(CS00); OCR0A=249;
+    TIMSK0=_BV(OCIE0A); sei();
+}
+/* Envia un caracter por UART, esperando registro de transmision libre. */
+static void uart_put(char c) { while (!(UCSR0A&_BV(UDRE0))) {} UDR0=c; }
+/* Transmite una cadena terminada en NUL por UART. */
+void uart_puts(const char *s) {while (*s) uart_put(*s++);}
+/* Convierte un entero positivo a decimal y lo envia por UART. */
+void uart_u32(uint32_t n) {char s[11]; uint8_t i=0; do {s[i++]='0'+n%10; n/=10;} while(n); while(i) uart_put(s[--i]);}
+/* Retira un byte del buffer RX; devuelve -1 si esta vacio. */
+int16_t uart_get(void) {if(head==tail) return -1; uint8_t c=rx[tail]; tail=(tail+1)&127; return c;}
+/* Lee y limpia errores de recepcion o desborde UART. */
+uint8_t uart_fault(void) {uint8_t e; ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {e=rx_error;rx_error=0;} return e;}
+/* Selecciona CS del RC522: active=1 lleva PB2 a nivel bajo. */
+void spi_select(uint8_t active) {if(active) PORTB&=~_BV(PB2); else PORTB|=_BV(PB2);}
+/* Transfiere un byte SPI full-duplex; retorna 0 por timeout. */
+uint8_t spi_transfer(uint8_t tx,uint8_t *out) {
+    SPDR=tx; uint16_t limit=60000;
+    while(!(SPSR&_BV(SPIF))) if(!--limit) return 0;
+    *out=SPDR; return 1;
+}
+/* Espera TWINT con limite temporal para evitar bloqueo por I2C. */
+static uint8_t twi_wait(void) {
+    uint32_t start=millis(); uint16_t guard=60000;
+    while(!(TWCR&_BV(TWINT))) if(millis()-start>=5 || !--guard) return 0;
+    return 1;
+}
+/* Escribe un byte al esclavo I2C; retorna 1 si hubo ACK. */
+uint8_t twi_write(uint8_t address,uint8_t data) {
+    uint8_t ok=0;
+    TWCR=_BV(TWINT)|_BV(TWSTA)|_BV(TWEN);
+    if(!twi_wait() || ((TWSR&0xf8)!=0x08 && (TWSR&0xf8)!=0x10)) goto stop;
+    TWDR=address<<1; TWCR=_BV(TWINT)|_BV(TWEN);
+    if(!twi_wait() || (TWSR&0xf8)!=0x18) goto stop;
+    TWDR=data; TWCR=_BV(TWINT)|_BV(TWEN);
+    if(!twi_wait() || (TWSR&0xf8)!=0x28) goto stop;
+    ok=1;
+stop:
+    TWCR=_BV(TWINT)|_BV(TWEN)|_BV(TWSTO);
+    uint32_t t=millis(); uint16_t guard=60000;
+    while(TWCR&_BV(TWSTO)) if(millis()-t>=5 || !--guard) {ok=0;break;}
+    if(!ok) {TWCR=0; TWCR=_BV(TWEN);} /* permitir reintento sin bloqueo */
+    return ok;
+}
+/* Escanea filas y columnas con antirrebote; retorna tecla o 0. */
+char keypad_poll(void) {
+    static uint32_t last, changed;
+    static char candidate, stable;
+    const char keys[16]="123A456B789C*0#D";
+    uint32_t now=millis(); if(now-last<5) return 0; last=now;
+    uint8_t count=0; char found=0;
+    for(uint8_t row=0;row<4;row++) {
+        DDRD&=~0x3c; PORTD&=~0x3c; DDRD|=_BV(row+2);
+        _delay_us(30);
+        uint8_t low=(~PINC)&15;
+        for(uint8_t c=0;c<4;c++) if(low&_BV(c)) {found=keys[row*4+c];count++;}
+    }
+    DDRD&=~0x3c;
+    if(count>1) found='!'; /* nunca aceptar un acorde ambiguo */
+    if(found!=candidate) {candidate=found;changed=now;}
+    if(now-changed>=25 && stable!=candidate) {
+        char old=stable;stable=candidate;
+        if(stable && stable!='!' && !old) return stable;
+    }
+    return 0;
+}
+/* Enciende LED verde (exito) o rojo (error) por duration ms. */
+void indicate(uint8_t success,uint16_t duration) {
+    PORTB&=~_BV(PB0);PORTD&=~_BV(PD6);
+    if(success) PORTB|=_BV(PB0);else PORTD|=_BV(PD6);
+    led_until=millis()+duration;led_on=1;
+}
+/* Activa buzzer y LED rojo durante tres segundos. */
+void alarm_start(void) {PORTD|=_BV(PD7);alarm_until=millis()+3000;alarm_on=1;indicate(0,3000);}
+/* Apaga indicadores cuando vence su temporizacion. */
+void indicators_task(void) {
+    if(led_on&&!before(led_until)) {PORTB&=~_BV(PB0);PORTD&=~_BV(PD6);led_on=0;}
+    if(alarm_on&&!before(alarm_until)) {PORTD&=~_BV(PD7);alarm_on=0;}
+}
+
+/* ====================================================================
+ * PANTALLA LCD I2C
+ * ==================================================================== */
+#include <util/delay.h>
+static uint8_t healthy=1;
+/* PCF: P0 RS, P1 RW=0, P2 E, P3 luz, P4..7 datos. */
+/* Envia medio byte HD44780 mediante PCF8574; rs selecciona datos. */
+static void nibble(uint8_t d,uint8_t rs) {
+    if(!healthy) return;
+    uint8_t v=(d&0xf0)|8|rs;
+    if(!twi_write(LCD_ADDRESS,v) || !twi_write(LCD_ADDRESS,v|4) || !twi_write(LCD_ADDRESS,v)) healthy=0;
+    _delay_us(50);
+}
+/* Envia un byte LCD como dos nibbles, primero el mas significativo. */
+static void send(uint8_t d,uint8_t rs) {nibble(d,rs);nibble(d<<4,rs);}
+/* Inicializa LCD HD44780 en modo 4 bits via I2C. */
+uint8_t lcd_init(void) {
+    healthy=1;_delay_ms(40);
+    nibble(0x30,0);_delay_ms(5);nibble(0x30,0);_delay_ms(1);nibble(0x30,0);nibble(0x20,0);
+    send(0x28,0);send(0x08,0);send(0x01,0);_delay_ms(2);send(0x06,0);send(0x0c,0);
+    return healthy;
+}
+/* Indica si el ultimo intercambio LCD/I2C ha sido satisfactorio. */
+uint8_t lcd_ok(void) {return healthy;}
+/* Muestra dos lineas de 16 caracteres y refleja los cambios por UART.
+ * No transmite el PIN real: el llamador ya lo sustituye por asteriscos.
+ * Si el I2C falla, UART sigue funcionando independientemente. */
+void lcd_lines(const char *a,const char *b) {
+    static char old_a[17],old_b[17];
+    static uint8_t first=1;
+    char now_a[17],now_b[17];
+    for(uint8_t i=0;i<16;i++) {now_a[i]=' ';now_b[i]=' ';}
+    now_a[16]=0;now_b[16]=0;
+    for(uint8_t i=0;i<16&&a[i];i++)now_a[i]=a[i];
+    for(uint8_t i=0;i<16&&b[i];i++)now_b[i]=b[i];
+    if(!first&&!strcmp(old_a,now_a)&&!strcmp(old_b,now_b))return;
+    first=0;
+    strcpy(old_a,now_a);strcpy(old_b,now_b);
+    for(uint8_t row=0;row<2;row++) {
+        const char *text=row?now_b:now_a;
+        send(row?0xc0:0x80,0);
+        for(uint8_t i=0;i<16;i++)send(text[i],1);
+    }
+    uart_puts("\r\n--- LCD 16x2 ---\r\n");
+    uart_puts(now_a);uart_puts("\r\n");
+    uart_puts(now_b);uart_puts("\r\n----------------\r\n");
+}
+/* Escribe representacion decimal de n en el buffer del llamador. */
+void lcd_number(char *out,uint32_t n) {
+    char rev[10];uint8_t i=0;do {rev[i++]='0'+n%10;n/=10;}while(n);
+    while(i)*out++=rev[--i];*out=0;
+}
+
+/* ====================================================================
+ * CUENTAS Y PERSISTENCIA EEPROM
+ * ==================================================================== */
+/* Dos copias por cuenta. Commit escrito al final; CRC detecta registros incompletos. */
+
+#include <avr/eeprom.h>
+#include <string.h>
+#include <stddef.h>
+typedef struct __attribute__((packed)) {
+    uint16_t magic;uint8_t version;uint8_t uid[4];char pin[4];
+    uint32_t balance;uint32_t sequence;uint16_t crc;uint8_t commit;
+} Record;
+typedef char record_size_must_be_22[(sizeof(Record)==22)?1:-1];
+static Record EEMEM slots[ACCOUNT_COUNT][2];
+Account accounts[ACCOUNT_COUNT];
+/* UID reales de las dos tarjetas; la cuenta 3 conserva el UID anterior. */
+static const Account initial[ACCOUNT_COUNT]={
+    {{0xf3,0x7e,0x19,0x2d},{'1','2','3','4'},1000},
+    {{0x03,0xc8,0x30,0x28},{'0','0','0','7'},2500},
+    {{0x65,0xb2,0x9a,0xe3},{'4','3','2','1'},500}
+};
+static uint8_t active[ACCOUNT_COUNT],busy,save_index,save_slot,step;
+static uint32_t sequences[ACCOUNT_COUNT];
+static Record pending;
+/* Calcula CRC16 de un registro para detectar escrituras incompletas. */
+static uint16_t crc16(const void *data,uint8_t n) {
+    const uint8_t *p=data;uint16_t crc=0xffff;
+    while(n--) {crc^=*p++;for(uint8_t b=0;b<8;b++)crc=(crc>>1)^((crc&1)?0xa001:0);}
+    return crc;
+}
+/* Comprueba firma, version, commit, saldo, PIN y CRC del registro. */
+static uint8_t valid(const Record *r) {
+    if(r->magic!=0xca73 || r->version!=1 || r->commit!=0xa5 || r->balance>MAX_BALANCE || r->crc!=crc16(r,offsetof(Record,crc))) return 0;
+    for(uint8_t i=0;i<4;i++)if(r->pin[i]<'0'||r->pin[i]>'9')return 0;
+    return 1;
+}
+/* Retorna 1 si todo el slot EEPROM esta en 0xFF (virgen). */
+static uint8_t erased(const Record *r) {const uint8_t*p=(const uint8_t*)r;for(uint8_t i=0;i<sizeof(*r);i++)if(p[i]!=255)return 0;return 1;}
+/* Forma un registro con UID/PIN actuales, saldo, secuencia y CRC. */
+static Record make_record(uint8_t i,uint32_t balance,uint32_t seq) {
+    Record r;r.magic=0xca73;r.version=1;memcpy(r.uid,accounts[i].uid,4);memcpy(r.pin,accounts[i].pin,4);
+    r.balance=balance;r.sequence=seq;r.crc=crc16(&r,offsetof(Record,crc));r.commit=0xa5;return r;
+}
+/* Migra un UID a un slot nuevo, preservando saldo y PIN.
+ * La copia anterior sigue valida hasta confirmar y verificar la nueva.
+ * Retorna 1 en exito, 0 en error. */
+static uint8_t accounts_update_uid(uint8_t i,const uint8_t new_uid[4]) {
+    if(i>=ACCOUNT_COUNT)return 0;
+    if(!memcmp(accounts[i].uid,new_uid,4))return 1;
+    uint8_t dest=active[i]^1;
+    Account previous=accounts[i];
+    memcpy(accounts[i].uid,new_uid,4);
+    Record r=make_record(i,accounts[i].balance,sequences[i]+1);
+    eeprom_update_byte(&slots[i][dest].commit,0);
+    eeprom_update_block(&r,&slots[i][dest],offsetof(Record,commit));
+    eeprom_update_byte(&slots[i][dest].commit,0xa5);
+    eeprom_busy_wait();
+    Record check;
+    eeprom_read_block(&check,&slots[i][dest],sizeof check);
+    if(!valid(&check)||memcmp(&check,&r,sizeof r)) {
+        accounts[i]=previous;
+        return 0;
+    }
+    active[i]=dest;sequences[i]=r.sequence;
+    return 1;
+}
+/* No modifica UID ajenos, PIN ni saldos */
+static uint8_t accounts_migrate_uids(void) {
+    const uint8_t old1[4]={0xa3,0x7b,0x21,0x09};
+    const uint8_t old2[4]={0x65,0xb2,0x9a,0xe3};
+    const uint8_t new1[4]={0xf3,0x7e,0x19,0x2d};
+    const uint8_t new2[4]={0x03,0xc8,0x30,0x28};
+	const uint8_t old_uid_3[4] = {0x11, 0x22, 0x33, 0x44};
+
+	const uint8_t new_uid_3[4] = {0x65, 0xB2, 0x9A, 0xE3};
+    if(!memcmp(accounts[0].uid,old1,4)&&!accounts_update_uid(0,new1))return 0;
+    if(!memcmp(accounts[1].uid,old2,4)&&!accounts_update_uid(1,new2))return 0;
+	// Actualizar el UID de la tercera cuenta
+	// conservando el PIN y el saldo almacenados.
+	if (!memcmp(accounts[2].uid, old_uid_3, 4))
+	{
+		if (!accounts_update_uid(2, new_uid_3))
+		return 0;
+	}
+    return 1;
+}
+/* Recupera la copia mas reciente de cada cuenta o crea valores iniciales. */
+uint8_t accounts_init(void) {
+    for(uint8_t i=0;i<ACCOUNT_COUNT;i++) {
+        Record a,b;eeprom_read_block(&a,&slots[i][0],sizeof a);eeprom_read_block(&b,&slots[i][1],sizeof b);
+        uint8_t va=valid(&a),vb=valid(&b);
+        if(!va&&!vb) {
+            /* Solo una EEPROM virgen recibe valores iniciales. Corrupcion: cerrar operaciones. */
+            if(!erased(&a)||!erased(&b))return 0;
+            accounts[i]=initial[i];a=make_record(i,accounts[i].balance,0);
+            eeprom_update_block(&a,&slots[i][0],offsetof(Record,commit));
+            eeprom_update_byte(&slots[i][0].commit,0xa5);eeprom_busy_wait();
+            eeprom_read_block(&a,&slots[i][0],sizeof a);if(!valid(&a))return 0;va=1;
+        }
+        active[i]=vb&&(!va||(int32_t)(b.sequence-a.sequence)>0);
+        const Record *r=active[i]?&b:&a;
+        memcpy(accounts[i].uid,r->uid,4);memcpy(accounts[i].pin,r->pin,4);accounts[i].balance=r->balance;sequences[i]=r->sequence;
+    }
+    /* Migracion no destructiva, solo cuando la EEPROM tenia UID antiguos. */
+    return accounts_migrate_uids();
+}
+/* Busca UID entre las tres cuentas; devuelve indice o -1. */
+int8_t accounts_find(const uint8_t uid[4]) {for(uint8_t i=0;i<ACCOUNT_COUNT;i++)if(!memcmp(uid,accounts[i].uid,4))return i;return -1;}
+/* Prepara escritura EEPROM no bloqueante en slot alterno. */
+uint8_t accounts_save(uint8_t i,uint32_t balance) {
+    if(busy||i>=ACCOUNT_COUNT||balance>MAX_BALANCE)return 0;
+    pending=make_record(i,balance,sequences[i]+1);save_index=i;save_slot=active[i]^1;step=0;busy=1;return 1;
+}
+/* Avanza una escritura EEPROM por llamada; 0 espera, 1 OK, 2 error. */
+uint8_t accounts_task(void) {
+    if(!busy||!eeprom_is_ready())return 0;
+    uint8_t *target=(uint8_t*)&slots[save_index][save_slot];
+    if(step==0)eeprom_update_byte(target+offsetof(Record,commit),0);
+    else if(step<=offsetof(Record,commit))eeprom_update_byte(target+step-1,((uint8_t*)&pending)[step-1]);
+    else if(step==sizeof(Record))eeprom_update_byte(target+offsetof(Record,commit),0xa5);
+    else {
+        Record check;eeprom_read_block(&check,target,sizeof check);busy=0;
+        if(!valid(&check)||memcmp(&check,&pending,sizeof check))return 2;
+        active[save_index]=save_slot;sequences[save_index]=pending.sequence;accounts[save_index].balance=pending.balance;return 1;
+    }
+    step++;return 0;
+}
+
+/* ====================================================================
+ * CONTROLADOR RFID MFRC522
+ * ==================================================================== */
+/* ISO14443A: REQA, anticollision CL1, SELECT y HLTA.
+ * No requiere IRQ. Validar radio, temporizacion y niveles en hardware real. */
+
+
+#include <avr/io.h>
+#include <util/delay.h>
+enum {Command=1,ComIEn=2,ComIrq=4,Error=6,FIFOData=9,FIFOLevel=10,Control=12,
+      BitFraming=13,Coll=14,Mode=17,TxMode=18,RxMode=19,TxControl=20,TxASK=21,
+      TMode=42,TPrescaler=43,TReloadH=44,TReloadL=45,Version=55};
+static uint8_t present,io_ok;
+/* Lee un registro MFRC522 mediante dos bytes SPI. */
+static uint8_t reg_read(uint8_t reg) {
+    uint8_t d=255,discard;spi_select(1);
+    if(!spi_transfer(0x80|((reg<<1)&0x7e),&discard)||!spi_transfer(0,&d))io_ok=0;
+    spi_select(0);return d;
+}
+/* Escribe un registro MFRC522 por SPI. */
+static void reg_write(uint8_t reg,uint8_t value) {
+    uint8_t d;spi_select(1);
+    if(!spi_transfer((reg<<1)&0x7e,&d)||!spi_transfer(value,&d))io_ok=0;
+    spi_select(0);
+}
+/* Modifica bits seleccionados de un registro del lector. */
+static void bits(uint8_t reg,uint8_t mask,uint8_t set) {uint8_t v=reg_read(reg);reg_write(reg,set?v|mask:v&~mask);}
+/* Reinicia e inicializa el RC522; acepta tambien version fisica 0xB2. */
+uint8_t rfid_init(void) {
+    present=0;io_ok=1;PORTB&=~_BV(PB1);_delay_ms(2);PORTB|=_BV(PB1);_delay_ms(5);
+    uint8_t version=reg_read(Version);
+    if(!io_ok||(version!=0x91&&version!=0x92&&version!=0x88&&version!=0xb2))return 0;
+    reg_write(Command,0x0f);uint32_t start=millis();
+    while(reg_read(Command)&0x10)if(millis()-start>=20)return 0;
+    reg_write(TMode,0x80);reg_write(TPrescaler,0xa9);reg_write(TReloadH,0);reg_write(TReloadL,400&255);
+    /* 400 ticks con prescaler 0xA9: unos 10 ms. */
+    reg_write(TReloadH,400>>8);reg_write(TxASK,0x40);reg_write(Mode,0x3d);
+    reg_write(TxMode,0);reg_write(RxMode,0);reg_write(ComIEn,0);bits(TxControl,3,1);
+    present=io_ok;return present;
+}
+/* Retorna 1 si la inicializacion del RC522 fue satisfactoria. */
+uint8_t rfid_present(void) {return present;}
+/* Calcula CRC_A ISO14443A para SELECT y HALT. */
+static void crc_a(const uint8_t *data,uint8_t len,uint8_t *out) {
+    uint16_t crc=0x6363;
+    while(len--) {uint8_t c=*data++^(uint8_t)crc;c^=c<<4;crc=(crc>>8)^((uint16_t)c<<8)^((uint16_t)c<<3)^(c>>4);}
+    out[0]=crc;out[1]=crc>>8;
+}
+/* Transmite trama RFID y recibe respuesta con timeout. */
+static uint8_t exchange(const uint8_t *tx,uint8_t n,uint8_t framing,uint8_t *rx,uint8_t *len) {
+    io_ok=1;reg_write(Command,0);reg_write(ComIrq,0x7f);reg_write(FIFOLevel,0x80);
+    for(uint8_t i=0;i<n;i++)reg_write(FIFOData,tx[i]);
+    reg_write(BitFraming,framing);reg_write(Command,0x0c);bits(BitFraming,0x80,1);
+    uint32_t start=millis();uint8_t irq;
+    do {irq=reg_read(ComIrq);if(!io_ok||millis()-start>=20)goto fail;}while(!(irq&0x31));
+    bits(BitFraming,0x80,0);
+    if((irq&1)||(reg_read(Error)&0x1b))goto fail;
+    uint8_t count=reg_read(FIFOLevel);
+    if(count>*len || (reg_read(Control)&7))goto fail;
+    for(uint8_t i=0;i<count;i++)rx[i]=reg_read(FIFOData);
+    *len=count;return io_ok;
+fail:
+    reg_write(Command,0);bits(BitFraming,0x80,0);return 0;
+}
+/* Solicita y selecciona tarjeta; retorna 1 UID4, 2 UID largo, 0 fallo. */
+uint8_t rfid_uid(uint8_t uid[4]) {
+    if(!present)return 0;
+    uint8_t request=0x26,rx[10],len=sizeof rx;
+    if(!exchange(&request,1,7,rx,&len)||len!=2)return 0;
+    uint8_t anticoll[2]={0x93,0x20};len=sizeof rx;bits(Coll,0x80,0);
+    if(!exchange(anticoll,2,0,rx,&len)||len!=5)return 0;
+    if((rx[0]^rx[1]^rx[2]^rx[3])!=rx[4])return 0;
+    if(rx[0]==0x88)return 2; /* UID de 7/10 bytes fuera de la consigna */
+    uint8_t select[9]={0x93,0x70};for(uint8_t i=0;i<5;i++)select[2+i]=rx[i];crc_a(select,7,&select[7]);
+    len=sizeof rx;if(!exchange(select,9,0,rx,&len)||len!=3)return 0;
+    uint8_t crc[2];crc_a(rx,1,crc);
+    if(rx[1]!=crc[0]||rx[2]!=crc[1]||(rx[0]&4))return 0;
+    for(uint8_t i=0;i<4;i++)uid[i]=select[2+i];
+    uint8_t halt[4]={0x50,0};crc_a(halt,2,&halt[2]);len=sizeof rx;
+    exchange(halt,4,0,rx,&len); /* HLTA correcto termina sin respuesta. */
+    return 1;
+}
