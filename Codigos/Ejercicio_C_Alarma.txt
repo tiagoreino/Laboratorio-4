@@ -1,0 +1,374 @@
+#define F_CPU 16000000UL
+ 
+#include <avr/io.h>
+#include <util/delay.h>
+ 
+// LCD 16x2 con modulo I2C
+#define LCD_ADDR  0x27   // direccion I2C de 7 bits
+ 
+// LCD
+void lcd_init(void);
+void lcd_clear(void);
+void lcd_set_cursor(uint8_t col, uint8_t fila);
+void lcd_print(const char *s);
+void lcd_titulo(const char *linea1, const char *linea2);
+ 
+//LDR con ADC
+#define LDR_Porton 0      // ADC0 = PC0
+#define ValorApertura 700 // ADC que se habre o cierra porton
+ 
+//inicializar ADC
+void ADC_init(void)
+{
+	// Referencia AVcc
+	ADMUX = (1 << REFS0);
+ 
+	// Habilitar ADC
+	// Prescaler = 128
+	//
+	// 16 MHz / 128 = 125 kHz
+ 
+	ADCSRA = (1 << ADEN)  |
+	(1 << ADPS2) |
+	(1 << ADPS1) |
+	(1 << ADPS0);
+}
+ 
+// LEER ADC
+uint16_t ADC_leer(uint8_t canal)
+{
+	// Seleccionar referencia AVcc y canal ADC
+	ADMUX = (1 << REFS0) | (canal & 0x0F);
+ 
+	// Iniciar conversión
+	ADCSRA |= (1 << ADSC);
+ 
+	// Esperar hasta que termine
+	while (ADCSRA & (1 << ADSC));
+ 
+	return ADC;
+}
+ 
+// Boton movimiento
+#define Boton_Mov PD2
+ 
+// Luces LED
+#define LED_LR PD3
+#define LED_LV PD4
+ 
+//Buzzer
+#define Buzzer PD5
+ 
+// Estados
+ 
+void estado0(void);
+void estado1(void);
+void estado2(void);
+void estado3(void);
+void estado4(void);
+void estado5(void);
+void estado6(void);
+void estado7(void);
+void estado8(void);
+void estado9(void);
+ 
+uint8_t estado = 0;
+uint16_t valor_ldr;
+ 
+static void salidas(uint8_t bz, uint8_t lr, uint8_t lv)
+{
+	PORTD = (PORTD & ~((1<<Buzzer)|(1<<LED_LR)|(1<<LED_LV)))
+	| (bz<<Buzzer) | (lr<<LED_LR) | (lv<<LED_LV);
+}
+ 
+int main(void)
+{
+	ADC_init();
+	lcd_init();
+	
+	DDRD |= (1<<LED_LR) | (1<<LED_LV) | (1<<Buzzer);
+	
+	DDRD  &= ~(1<<Boton_Mov);
+	PORTD |=  (1<<Boton_Mov);   // pull-up interno (botón a GND)
+	#define MOV() (!(PIND & (1<<Boton_Mov)))   // activo en bajo
+	
+	while(1)
+	{
+		switch(estado)
+		{
+			case 0:
+			estado0();
+			break;
+			
+			case 1:
+			estado1();
+			break;
+			
+			case 2:
+			estado2();
+			break;
+			
+			case 3:
+			estado3();
+			break;
+			
+			case 4:
+			estado4();
+			break;
+			
+			case 5:
+			estado5();
+			break;
+			
+			case 6:
+			estado6();
+			break;
+			
+			case 7:
+			estado7();
+			break;
+			
+			case 8:
+			estado8();
+			break;
+			
+			case 9:
+			estado9();
+			break;
+			
+		}
+	}
+	return 0;
+}
+ 
+void estado0(void)
+{
+	salidas(0, 0, 0);
+	lcd_titulo("Modo Auto.", "Desarmado");
+ 
+	while (1)
+	{
+		uint16_t ldr = ADC_leer(LDR_Porton);
+ 
+		if (ldr < ValorApertura)    { estado = 1; return; }
+		// falta OpBT = manual -> estado 5
+	}
+}
+ 
+void estado1(void)
+{
+	salidas(0, 0, 1);
+	lcd_titulo("Modo Auto.", "Armado");
+ 
+	while (1)
+	{
+		uint16_t ldr = ADC_leer(LDR_Porton);
+ 
+		if (ldr > ValorApertura)	{ estado = 2; return; }
+		if (MOV())					{ estado = 3; return; }
+		// falta OpBT = desarmar -> estado 5
+		// falta OpBT = manual -> estado 6
+	}
+}
+ 
+void estado2(void)
+{
+	salidas(1, 1, 0);
+	lcd_titulo("Alarma ON", "Porton Abierto");
+ 
+	while (1)
+	{
+ 
+		// falta OpBT = desactivar -> estado 4
+	}
+}
+ 
+void estado3(void)
+{
+	salidas(1, 1, 0);
+	lcd_titulo("Alarma ON", "Mov. Detectado");
+ 
+	while (1)
+	{
+ 
+		// falta OpBT = desactivar -> estado 4
+	}
+}
+ 
+void estado4(void)
+{
+	salidas(0, 0, 0);
+	lcd_titulo("Modo Auto.", "Alarma OFF");
+ 
+	while (1)
+	{
+		uint16_t ldr = ADC_leer(LDR_Porton);
+ 
+		if (ldr < ValorApertura && !MOV())	{ estado = 1; return; }
+		// falta OpBT = manual -> estado 5
+	}
+}
+ 
+void estado5(void)
+{
+	salidas(0, 0, 0);
+	lcd_titulo("Modo Manual", "Desarmado");
+ 
+	while (1)
+	{
+ 
+		// falta OpBT = auto -> estado 0
+		// falta OpBT = armar -> estado 6
+		// falta OpBT = alarma -> estado 7
+	}
+}
+ 
+void estado6(void)
+{
+	salidas(0, 0, 1);
+	lcd_titulo("Modo Manual", "Armado");
+ 
+	while (1)
+	{
+		uint16_t ldr = ADC_leer(LDR_Porton);
+ 
+		// falta OpBT = auto -> estado 1
+		// falta OpBT = desarmar -> estado 5
+		// falta OpBT = alarma -> estado 7
+		if (ldr > ValorApertura)	{ estado = 8; return; }
+		if (MOV())					{ estado = 9; return; }
+	}
+}
+ 
+void estado7(void)
+{
+	salidas(1, 1, 0);
+	lcd_titulo("Modo Manual", "Alarma ON");
+ 
+	while (1)
+	{
+ 
+		// falta OpBT = desarmar -> estado 5
+		// falta OpBT = armar -> estado 6
+	}
+}
+ 
+void estado8(void)
+{
+	salidas(1, 1, 0);
+	lcd_titulo("Alarma ON", "Porton Abierto");
+ 
+	while (1)
+	{
+ 
+		// falta OpBT = desactivar -> estado 6
+	}
+}
+ 
+void estado9(void)
+{
+	salidas(1, 1, 0);
+	lcd_titulo("Alarma ON", "Mov.Detectado");
+ 
+	while (1)
+	{
+ 
+		// falta OpBT = desactivar -> estado 6
+	}
+}
+ 
+// LCD PARA I2C
+#define LCD_RS  0x01
+#define LCD_E   0x04
+#define LCD_BL  0x08
+ 
+// modo maestro
+static void twi_init(void) {
+	TWSR = 0;        // prescaler del TWI = 1
+	TWBR = 72;       // SCL = F_CPU / (16 + 2*TWBR) = 16 MHz / 160 = 100 kHz
+}
+ 
+static void twi_start(uint8_t direccion_escritura) {
+	TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN);   // condicion START
+	while (!(TWCR & (1 << TWINT)));
+	TWDR = direccion_escritura;                          // direccion + bit W
+	TWCR = (1 << TWINT) | (1 << TWEN);
+	while (!(TWCR & (1 << TWINT)));
+}
+ 
+static void twi_write(uint8_t dato) {
+	TWDR = dato;
+	TWCR = (1 << TWINT) | (1 << TWEN);
+	while (!(TWCR & (1 << TWINT)));
+}
+ 
+static void twi_stop(void) {
+	TWCR = (1 << TWINT) | (1 << TWEN) | (1 << TWSTO);   // condicion STOP
+}
+ 
+// inicializacion
+static void lcd_nibble(uint8_t nibble) {
+	uint8_t d = ((nibble << 4) & 0xF0) | LCD_BL;
+	twi_start(LCD_ADDR << 1);
+	twi_write(d | LCD_E);    // E = 1
+	twi_write(d);            // E = 0 (el LCD lee el dato en este flanco de bajada)
+	twi_stop();
+}
+ 
+// Manda un byte completo: dos nibbles, cada uno con su pulso de E.
+// rs = 0 -> comando, rs = LCD_RS -> caracter. Todo en UNA sola transaccion I2C.
+static void lcd_enviar(uint8_t dato, uint8_t rs) {
+	uint8_t alto = (dato & 0xF0)        | LCD_BL | rs;
+	uint8_t bajo = ((dato << 4) & 0xF0) | LCD_BL | rs;
+	twi_start(LCD_ADDR << 1);
+	twi_write(alto | LCD_E);
+	twi_write(alto);
+	twi_write(bajo | LCD_E);
+	twi_write(bajo);
+	twi_stop();
+}
+ 
+static void lcd_cmd(uint8_t cmd) {
+	lcd_enviar(cmd, 0);
+}
+ 
+void lcd_clear(void) {
+	lcd_cmd(0x01);
+	_delay_ms(2);            // "clear" es lento (~1,5 ms)
+}
+ 
+void lcd_init(void) {
+	twi_init();
+	_delay_ms(50);           // el LCD necesita tiempo para arrancar
+ 
+	// Secuencia de arranque del HD44780 para forzar el modo de 4 bits
+	lcd_nibble(0x03);  _delay_ms(5);
+	lcd_nibble(0x03);  _delay_us(150);
+	lcd_nibble(0x03);  _delay_us(150);
+	lcd_nibble(0x02);  _delay_us(150);   // pasa a 4 bits
+ 
+	lcd_cmd(0x28);           // 4 bits, 2 lineas, fuente 5x8
+	lcd_cmd(0x0C);           // display encendido, sin cursor
+	lcd_cmd(0x06);           // el cursor avanza hacia la derecha
+	lcd_clear();
+}
+ 
+void lcd_set_cursor(uint8_t col, uint8_t fila) {
+	// La linea 1 empieza en la direccion 0x00 y la linea 2 en 0x40
+	lcd_cmd(0x80 | ((fila ? 0x40 : 0x00) + col));
+}
+ 
+void lcd_print(const char *s) {
+	while (*s) {
+		lcd_enviar((uint8_t)*s++, LCD_RS);
+	}
+}
+ 
+// Borra y escribe las dos lineas
+void lcd_titulo(const char *linea1, const char *linea2) {
+	lcd_clear();
+	lcd_set_cursor(0, 0);
+	lcd_print(linea1);
+	lcd_set_cursor(0, 1);
+	lcd_print(linea2);
+}
