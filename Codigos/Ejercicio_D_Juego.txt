@@ -1,39 +1,175 @@
 #define F_CPU 16000000UL
 
 #include <avr/io.h>
-#include <util/delay.h>
-#include <avr/pgmspace.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
 #include <avr/interrupt.h>
+#include <avr/eeprom.h>
+#include <util/delay.h>
+#include <stdint.h>
+#include <stdlib.h>
 
-#define WS2812_PIN PD3 // Pin datos matriz (6)
-#define WS2812_DDR DDRH  // Registro dirección Puerto H
-#define WS2812_PORT PORTH  // Registro salida Puerto H
+// ============================== CONFIG ==============================
+#define WS2812_PIN   PD3
+#define WS2812_DDR   DDRD
+#define WS2812_PORT  PORTD
 
-#define NUM_LEDS 64 
+#define JOY_X    1      // ADC0
+#define JOY_Y    0     // ADC1
+#define JOY_SW   PD2
+#define ADC_SEMILLA 5   // A5 flotante
 
-// Estructura color RGB en orden GRB (formato interno WS2812)
-typedef struct {
-	uint8_t g;
-	uint8_t r;
-	uint8_t b;
-} cRGB;
+#define NUM_LEDS   64
+#define LADO       8
+#define BRILLO     10   // 0..255 (bajo para pruebas: menos corriente)
 
-cRGB leds[NUM_LEDS]; // Búfer memoria de 64 LEDs
+#define DEADZONE   120  // zona muerta del joystick (centro ~512)
+#define INVERT_H   0    // 1 para invertir izquierda/derecha
+#define INVERT_V   0    // 1 para invertir arriba/abajo
 
-// Envío bit a bit con temporización estricta por ensamblador inline (a 16 MHz)
-void ws2812_send_byte(uint8_t b) {
+#define MAX_NIVEL        32
+#define T_MOSTRAR_MS     500
+#define T_PAUSA_MS       200
+#define T_LIBRE_MS       3000
+#define PRIMER_REPITE    40   // ticks de 10 ms antes de repetir movimiento
+#define REPITE           15   // ticks de 10 ms entre repeticiones
+
+// ============================== COLORES =============================
+#define R_Verde 99
+#define G_Verde 199
+#define B_Verde 77
+
+#define R_Amarillo 254
+#define G_Amarillo 231
+#define B_Amarillo 97
+
+#define R_Naranja 254
+#define G_Naranja 174
+#define B_Naranja 52
+
+#define R_Rojillo 228
+#define G_Rojillo 59
+#define B_Rojillo 68
+
+#define R_Rojo 162
+#define G_Rojo 38
+#define B_Rojo 51
+
+#define R_Violeta 104
+#define G_Violeta 56
+#define B_Violeta 108
+
+#define R_Azul 18
+#define G_Azul 78
+#define B_Azul 137
+
+typedef struct { uint8_t r, g, b; } Color;
+
+static const Color C_VERDE    = {R_Verde,    G_Verde,    B_Verde};
+static const Color C_AMARILLO = {R_Amarillo, G_Amarillo, B_Amarillo};
+static const Color C_NARANJA  = {R_Naranja,  G_Naranja,  B_Naranja};
+static const Color C_ROJILLO  = {R_Rojillo,  G_Rojillo,  B_Rojillo};
+static const Color C_ROJO     = {R_Rojo,     G_Rojo,     B_Rojo};
+static const Color C_VIOLETA  = {R_Violeta,  G_Violeta,  B_Violeta};
+static const Color C_AZUL     = {R_Azul,     G_Azul,     B_Azul};
+static const Color C_BLANCO   = {225, 225, 225};
+static const Color C_ROJO_PURO = {255, 0, 0};
+
+// Colores del juego: cada uno con su tono en el buzzer
+#define N_COLORES 6
+static const Color PALETA[N_COLORES] = {
+	{R_Verde,    G_Verde,    B_Verde},
+	{R_Amarillo, G_Amarillo, B_Amarillo},
+	{R_Naranja,  G_Naranja,  B_Naranja},
+	{R_Rojillo,  G_Rojillo,  B_Rojillo},
+	{R_Violeta,  G_Violeta,  B_Violeta},
+	{R_Azul,     G_Azul,     B_Azul}
+};
+static const uint16_t TONOS[N_COLORES] = {523, 587, 659, 784, 880, 988};
+#define TONO_ERROR 130
+
+// ============================== ESTADOS =============================
+enum { E_MENU = 0, E_JUEGO, E_RECORD, E_SALIR, E_TERMINADO, E_RECORD_MARCADO };
+
+// ============================== EEPROM ==============================
+static uint8_t EEMEM ee_record;
+static uint8_t EEMEM ee_ultimo;
+
+static uint8_t record = 0;
+
+// ============================== GLOBALES ============================
+typedef struct { uint8_t g, r, b; } cRGB;   // orden GRB (WS2812)
+static cRGB leds[NUM_LEDS];
+
+typedef struct { int8_t h, v; } Dir;        // h: -1 izq/+1 der, v: -1 arriba/+1 abajo
+
+static uint8_t seq_x[MAX_NIVEL];
+static uint8_t seq_y[MAX_NIVEL];
+static uint8_t seq_c[MAX_NIVEL];
+
+static uint8_t  cursor_color = 0;
+static uint16_t semilla_adc  = 0;
+static uint8_t  sw_prev      = 1;
+
+// ============================== UTILIDADES ==========================
+static void esperar(uint16_t ms) {
+	while (ms--) _delay_ms(1);
+}
+
+
+void borrar_memoria(void)
+{
+	eeprom_update_byte(&ee_record, 0);
+	eeprom_update_byte(&ee_ultimo, 0);
+}
+
+// ============================== BUZZER (Timer1) =====================
+void sonar_frecuencia_buzzer1(uint16_t hz) {
+	static uint16_t actual = 0;
+	if (hz == actual) return;
+	actual = hz;
+
+	if (hz == 0) {
+		TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
+		TCCR1A &= ~(1 << COM1B0);
+		PORTB &= ~(1 << PB2);
+		return;
+	}
+
+	uint16_t ocr = (F_CPU / (2UL * 64UL * hz)) - 1;
+	OCR1A = ocr;
+	OCR1B = ocr;
+	TCNT1 = 0;
+	TCCR1A |= (1 << COM1B0);
+	TCCR1B |= (1 << CS11) | (1 << CS10); // prescaler 64
+}
+
+static void tono(uint16_t hz, uint16_t ms) {
+	sonar_frecuencia_buzzer1(hz);
+	esperar(ms);
+	sonar_frecuencia_buzzer1(0);
+}
+
+// ============================== ADC =================================
+void ADC_init(void) {
+	ADMUX  = (1 << REFS0);
+	ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+}
+
+uint16_t ADC_read(uint8_t channel) {
+	ADMUX = (ADMUX & 0xF0) | (channel & 0x0F);
+	ADCSRA |= (1 << ADSC);
+	while (ADCSRA & (1 << ADSC));
+	return ADC;
+}
+
+// ============================== WS2812B =============================
+static void ws2812_send_byte(uint8_t b) {
 	for (uint8_t i = 0; i < 8; i++) {
 		if (b & 0x80) {
-			// Bit 1 (Pulso alto 700ns, bajo 600ns)
-			WS2812_PORT |= (1 << WS2812_PIN); // se enciende el pin
-			asm volatile ("nop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\t"); // Se queda congelado (nanosegundos)
-			WS2812_PORT &= ~(1 << WS2812_PIN); // Se apaga el pin
-			asm volatile ("nop\n\tnop\n\t"); // Mini espera antes de enviar siguente señal
-			} else {
-			// Bit 0 ( Pulso alto 350ns, bajo 800ns)
+			WS2812_PORT |= (1 << WS2812_PIN);
+			asm volatile ("nop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\t");
+			WS2812_PORT &= ~(1 << WS2812_PIN);
+			asm volatile ("nop\n\tnop\n\t");
+		} else {
 			WS2812_PORT |= (1 << WS2812_PIN);
 			asm volatile ("nop\n\tnop\n\t");
 			WS2812_PORT &= ~(1 << WS2812_PIN);
@@ -43,211 +179,439 @@ void ws2812_send_byte(uint8_t b) {
 	}
 }
 
-// Envía trama completa de búfer hacia matriz, desactiva interrupciones
-void ws2812_show(void) {
-	cli(); // Desactiva interrupciones para no alterar tiempos
-	for (uint16_t i = 0; i < NUM_LEDS; i++) {
-		ws2812_send_byte(leds[i].g);
-		ws2812_send_byte(leds[i].r);
-		ws2812_send_byte(leds[i].b);
-	}
-	sei(); // Reactivar interrupciones
-	_delay_us(60); // Senal Reset, fija colores
+static inline uint8_t escalar(uint8_t v) {
+	return ((uint16_t)v * BRILLO) >> 8;
 }
 
-// Apaga 64 LEDs de la matriz
+void ws2812_show(void) {
+	uint8_t s = SREG;
+	cli();
+	for (uint8_t i = 0; i < NUM_LEDS; i++) {
+		ws2812_send_byte(escalar(leds[i].g));
+		ws2812_send_byte(escalar(leds[i].r));
+		ws2812_send_byte(escalar(leds[i].b));
+	}
+	SREG = s;
+	_delay_us(60);   // reset
+}
+
+// Solo borra el buffer (NO muestra)
+static void clear_buffer(void) {
+	for (uint8_t i = 0; i < NUM_LEDS; i++) {
+		leds[i].r = 0; leds[i].g = 0; leds[i].b = 0;
+	}
+}
+
+// Borra buffer y apaga la matriz
 void ws2812_clear(void) {
-	for (uint16_t i = 0; i < NUM_LEDS; i++) {
-		leds[i].r = 0;
-		leds[i].g = 0;
-		leds[i].b = 0;
+	clear_buffer();
+	ws2812_show();
+}
+
+// Pone un LED por coordenadas. div > 1 atenua el color (c / div)
+static void set_led(uint8_t x, uint8_t y, Color c, uint8_t div) {
+	if (x >= LADO || y >= LADO) return;
+	uint8_t col = x;
+	uint8_t idx = y * LADO + col;
+	leds[idx].r = c.r / div;
+	leds[idx].g = c.g / div;
+	leds[idx].b = c.b / div;
+}
+
+static void fill_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, Color c, uint8_t div) {
+	for (uint8_t y = y0; y <= y1; y++)
+		for (uint8_t x = x0; x <= x1; x++)
+			set_led(x, y, c, div);
+}
+
+static void fill_all(Color c) {
+	fill_rect(0, 0, LADO - 1, LADO - 1, c, 1);
+}
+
+// ============================== BOTON ===============================
+// Detecta flanco de bajada (presionado) con antirrebote
+static uint8_t sw_flanco(void) {
+	uint8_t cur = (PIND & (1 << JOY_SW)) ? 1 : 0;
+	uint8_t p = sw_prev;
+	sw_prev = cur;
+	if (p && !cur) {
+		_delay_ms(20);
+		return 1;
+	}
+	return 0;
+}
+
+// Espera a que se suelte el boton (llamar al entrar a cada estado)
+static void sw_esperar_soltar(void) {
+	while (!(PIND & (1 << JOY_SW)));
+	_delay_ms(20);
+	sw_prev = 1;
+}
+
+// ============================== JOYSTICK ============================
+static void joy_raw(int16_t *vert, int16_t *horiz) {
+	*vert  = (int16_t)ADC_read(JOY_X) - 512;   // alto = arriba
+	*horiz = (int16_t)ADC_read(JOY_Y) - 512;   // alto = derecha
+}
+
+// 8 direcciones (para el menu)
+static Dir joy_leer8(void) {
+	int16_t a, b;
+	joy_raw(&a, &b);
+	Dir d = {0, 0};
+	if (a >  DEADZONE) d.v = -1; else if (a < -DEADZONE) d.v = 1;
+	if (b >  DEADZONE) d.h =  1; else if (b < -DEADZONE) d.h = -1;
+#if INVERT_V
+	d.v = -d.v;
+#endif
+#if INVERT_H
+	d.h = -d.h;
+#endif
+	return d;
+}
+
+// 4 direcciones (para el cursor): gana el eje con mayor desplazamiento
+static Dir joy_leer4(void) {
+	int16_t a, b;
+	joy_raw(&a, &b);
+	Dir d = {0, 0};
+	int16_t aa = a < 0 ? -a : a;
+	int16_t bb = b < 0 ? -b : b;
+	if (aa > DEADZONE || bb > DEADZONE) {
+		if (aa >= bb) d.v = (a > 0) ? -1 : 1;
+		else          d.h = (b > 0) ?  1 : -1;
+	}
+#if INVERT_V
+	d.v = -d.v;
+#endif
+#if INVERT_H
+	d.h = -d.h;
+#endif
+	return d;
+}
+
+// Mueve el cursor un paso (con auto-repeticion). Devuelve 1 si se movio.
+// Llamar cada 10 ms.
+static uint8_t cursor_actualizar(uint8_t *cx, uint8_t *cy) {
+	static int8_t ult_h = 0, ult_v = 0;
+	static uint8_t espera = 0;
+
+	Dir d = joy_leer4();
+	if (d.h == 0 && d.v == 0) {
+		ult_h = 0; ult_v = 0; espera = 0;
+		return 0;
+	}
+	if (d.h == ult_h && d.v == ult_v) {
+		if (espera) { espera--; return 0; }
+		espera = REPITE;
+	} else {
+		ult_h = d.h; ult_v = d.v;
+		espera = PRIMER_REPITE;
+	}
+
+	uint8_t ox = *cx, oy = *cy;
+	if (d.h < 0 && *cx > 0)          (*cx)--;
+	if (d.h > 0 && *cx < LADO - 1)   (*cx)++;
+	if (d.v < 0 && *cy > 0)          (*cy)--;
+	if (d.v > 0 && *cy < LADO - 1)   (*cy)++;
+	return (ox != *cx || oy != *cy);
+}
+
+// ============================== DIBUJO ==============================
+static void dibujar_cursor(uint8_t cx, uint8_t cy) {
+	clear_buffer();
+	set_led(cx, cy, PALETA[cursor_color], 1);
+	ws2812_show();
+}
+
+#define SEL_NADA    0
+#define SEL_JUGAR   1
+#define SEL_SALIR   2
+#define SEL_RECORD  3
+
+static void dibujar_menu(Dir d, uint8_t sel) {
+	clear_buffer();
+	fill_rect(2, 0, 5, 1, C_AMARILLO, (sel == SEL_JUGAR)  ? 1 : 4);  // arriba
+	fill_rect(5, 6, 7, 7, C_ROJO,     (sel == SEL_SALIR)  ? 1 : 4);  // abajo derecha
+	fill_rect(0, 6, 2, 7, C_AZUL,     (sel == SEL_RECORD) ? 1 : 4);  // abajo izquierda
+	// Jugador (cuadrado blanco 2x2) que se corre hacia la direccion elegida
+	fill_rect(3 + d.h, 3 + d.v, 4 + d.h, 4 + d.v, C_BLANCO, 1);
+	ws2812_show();
+}
+
+static void dibujar_barra(uint8_t n, Color c) {
+	clear_buffer();
+	for (uint8_t i = 0; i < n && i < NUM_LEDS; i++)
+		set_led(i % LADO, i / LADO, c, 1);
+	ws2812_show();
+}
+
+static void dibujar_x(Color c) {
+	clear_buffer();
+	for (uint8_t i = 0; i < LADO; i++) {
+		set_led(i, i, c, 1);
+		set_led(LADO - 1 - i, i, c, 1);
 	}
 	ws2812_show();
 }
 
-// Muestra "boton" Amarillo
-void ws2812_Amarillo() {
-	
-	uint8_t r = 254;
-	uint8_t g = 231;
-	uint8_t b = 97;
-	
-	for (uint8_t i = 2; i <= 12; i++) {
-		if (i == 6){
-			i += 5;
-		}else{
-			leds[i].r = r;
-			leds[i].g = g;
-			leds[i].b = b;
-			}
+// ============================== ANIMACIONES =========================
+static void animacion_exito(void) {
+	static const uint16_t t[3] = {523, 659, 784};
+	for (uint8_t i = 0; i < 3; i++) {
+		clear_buffer();
+		fill_all(C_VERDE);
+		ws2812_show();
+		tono(t[i], 100);
+		ws2812_clear();
+		esperar(60);
 	}
-	ws2812_show(); // Refrescaa la matriz
 }
 
-// Muestra "boton" Verde
-void ws2812_Verde() {
-	
-	uint8_t r = 99;
-	uint8_t g = 199;
-	uint8_t b = 77;
-	
-	for (uint8_t i = 0; i <= 17; i++) {
-		if (i == 2){
-			i += 6;
-			}else{
-				if (i == 11){
-					i += 6;
-				}else{
-					leds[i].r = r;
-					leds[i].g = g;
-					leds[i].b = b;
+static void animacion_error(void) {
+	for (uint8_t i = 0; i < 3; i++) {
+		clear_buffer();
+		fill_all(C_ROJO_PURO);
+		ws2812_show();
+		tono(TONO_ERROR, 200);
+		ws2812_clear();
+		esperar(120);
+	}
+}
+
+// ============================== JUEGO ===============================
+static void mostrar_secuencia(uint8_t len) {
+	for (uint8_t i = 0; i < len; i++) {
+		clear_buffer();
+		set_led(seq_x[i], seq_y[i], PALETA[seq_c[i]], 1);
+		ws2812_show();
+		sonar_frecuencia_buzzer1(TONOS[seq_c[i]]);
+		esperar(T_MOSTRAR_MS);
+		sonar_frecuencia_buzzer1(0);
+		ws2812_clear();
+		esperar(T_PAUSA_MS);
+	}
+}
+
+// Modo libre: el cursor se mueve y SW cambia su color al azar
+static void modo_libre(uint8_t *cx, uint8_t *cy) {
+	sw_esperar_soltar();
+	dibujar_cursor(*cx, *cy);
+	for (uint16_t t = 0; t < T_LIBRE_MS / 10; t++) {
+		if (cursor_actualizar(cx, cy)) dibujar_cursor(*cx, *cy);
+		if (sw_flanco()) {
+			uint8_t nuevo = rand() % N_COLORES;
+			if (nuevo == cursor_color) nuevo = (nuevo + 1) % N_COLORES;
+			cursor_color = nuevo;
+			dibujar_cursor(*cx, *cy);
+			tono(TONOS[nuevo], 80);
+		}
+		_delay_ms(10);
+	}
+}
+
+// Turno del jugador. Devuelve 1 si acerto toda la secuencia, 0 si fallo.
+static uint8_t turno_jugador(uint8_t len, uint8_t *cx, uint8_t *cy) {
+	sw_esperar_soltar();
+	dibujar_cursor(*cx, *cy);
+
+	uint8_t i = 0;
+	while (i < len) {
+		if (cursor_actualizar(cx, cy)) dibujar_cursor(*cx, *cy);
+
+		if (sw_flanco()) {
+			if (*cx == seq_x[i] && *cy == seq_y[i]) {
+				tono(TONOS[seq_c[i]], 120);   // feedback del color acertado
+				i++;
+			} else {
+				return 0;
 			}
 		}
+		_delay_ms(10);
 	}
-	ws2812_show(); // Refrescaa la matriz
+	return 1;
 }
 
-// Muestra "boton" Naranja
-void ws2812_Naranja() {
-	
-	uint8_t r = 254;
-	uint8_t g = 174;
-	uint8_t b = 52;
-	
-	for (uint8_t i = 6; i <= 22; i++) {
-		if (i == 8){
-			i += 5;
-			}else{
-				if (i == 16){
-					i += 6;
-				}else{
-					leds[i].r = r;
-					leds[i].g = g;
-					leds[i].b = b;
-				}
+static uint8_t estado_juego(void) {
+	uint8_t len = 0;
+	uint8_t fallo = 0;
+	uint8_t cx = 3, cy = 3;
+
+	while (len < MAX_NIVEL && !fallo) {
+		// Modo libre antes de cada nivel
+		modo_libre(&cx, &cy);
+
+		// Agrega un elemento nuevo a la secuencia
+		seq_x[len] = rand() & 7;
+		seq_y[len] = rand() & 7;
+		seq_c[len] = rand() % N_COLORES;
+		len++;
+
+		mostrar_secuencia(len);
+
+		if (turno_jugador(len, &cx, &cy)) {
+			animacion_exito();
+		} else {
+			fallo = 1;
 		}
 	}
-	ws2812_show(); // Refrescaa la matriz
-}
 
-// Muestra "boton" Rojillo
-void ws2812_Rojillo() {
-	
-	uint8_t r = 228;
-	uint8_t g = 59;
-	uint8_t b = 68;
-	
-	for (uint8_t i = 23; i <= 47; i++) {
-		if (i == 24){
-			i += 6;
-		}else{
-			if (i == 32){
-				i += 6;
-			}else{
-				if (i == 40){
-					i += 7;
-				}else{
-					leds[i].r = r;
-					leds[i].g = g;
-					leds[i].b = b;
-				}
-			}	
-		}	
+	// Niveles superados
+	uint8_t puntaje = fallo ? (len - 1) : len;
+	eeprom_update_byte(&ee_ultimo, puntaje);
+
+	if (fallo) animacion_error();
+
+	if (puntaje > record) {
+		record = puntaje;
+		eeprom_update_byte(&ee_record, record);
+		return E_RECORD_MARCADO;
 	}
-	ws2812_show(); // Refrescaa la matriz
+	return E_TERMINADO;
 }
 
-// Muestra "boton" Rojo
-void ws2812_Rojo() {
-	
-	uint8_t r = 162;
-	uint8_t g = 38;
-	uint8_t b = 51;
-	
-	for (uint8_t i = 36; i <= 63; i++) {
-		if (i == 47){
-			i += 6;
-			}else{
-				if (i == 56){
-					i += 6;
-				}else{
-					leds[i].r = r;
-					leds[i].g = g;
-					leds[i].b = b;
-				}
+// ============================== ESTADOS =============================
+static uint8_t estado_menu(void) {
+	// Bz1 = Bienvenida
+	tono(523, 100); tono(659, 100); tono(784, 150);
+
+	sw_esperar_soltar();
+
+	uint16_t ticks = 0;
+	uint8_t prev_key = 0xFF;
+	uint8_t sel = SEL_NADA;
+	Dir d = {0, 0};
+
+	while (1) {
+		d = joy_leer8();
+		uint8_t key = (uint8_t)((d.h + 1) * 3 + (d.v + 1));
+
+		if (key != prev_key) {
+			prev_key = key;
+			sel = SEL_NADA;
+			if      (d.v == -1 && d.h ==  0) sel = SEL_JUGAR;
+			else if (d.v ==  1 && d.h ==  1) sel = SEL_SALIR;
+			else if (d.v ==  1 && d.h == -1) sel = SEL_RECORD;
+			dibujar_menu(d, sel);
+		}
+
+		if (sw_flanco()) {
+			// la semilla depende del ruido del ADC y de cuanto tardo en apretar
+			srand(semilla_adc ^ (ticks * 31u));
+			if (sel == SEL_JUGAR)  return E_JUEGO;
+			if (sel == SEL_RECORD) return E_RECORD;
+			if (sel == SEL_SALIR)  return E_SALIR;
+		}
+
+		ticks++;
+		_delay_ms(10);
+	}
+}
+
+static uint8_t estado_record(void) {
+	sw_esperar_soltar();
+	sonar_frecuencia_buzzer1(0);                 // Bz1 = 0
+	dibujar_barra(record, C_VIOLETA);            // 1 LED por nivel de record
+
+	while (1) {
+		if (sw_flanco()) return E_MENU;          // Azul = 1
+		_delay_ms(10);
+	}
+}
+
+// Bye bye: apaga todo y duerme hasta que se presione SW
+static uint8_t estado_salir(void) {
+	tono(784, 150);
+	tono(659, 150);
+	tono(523, 250);
+
+	sw_esperar_soltar();
+	ws2812_clear();
+
+	while (1) {
+		if (sw_flanco()) {
+			return E_MENU;
+		}
+		_delay_ms(10);
+	}
+}
+
+static uint8_t estado_terminado(void) {
+	// Bz1 = Derrota
+	tono(392, 200); tono(330, 200); tono(262, 350);
+	dibujar_x(C_ROJO_PURO);
+
+	sw_esperar_soltar();
+	while (1) {
+		if (sw_flanco()) return E_MENU;          // Azul = 1
+		_delay_ms(10);
+	}
+}
+
+static uint8_t estado_record_marcado(void) {
+	// Bz1 = Victoria
+	tono(523, 120); tono(659, 120); tono(784, 120); tono(1047, 300);
+
+	sw_esperar_soltar();
+	uint8_t alterna = 0;
+	uint8_t t = 0;
+	while (1) {
+		if (t == 0) {
+			dibujar_barra(record, alterna ? C_AMARILLO : C_VIOLETA);
+			alterna ^= 1;
+		}
+		if (sw_flanco()) return E_MENU;          // Azul = 1
+		t = (t + 1) % 40;                        // parpadeo cada 400 ms
+		_delay_ms(10);
+	}
+}
+
+// ============================== MAIN ================================
+static void semilla_init(void) {
+	uint16_t s = 0;
+	for (uint8_t i = 0; i < 16; i++) {
+		s = (s << 1) | (ADC_read(ADC_SEMILLA) & 1);
+		_delay_ms(1);
+	}
+	semilla_adc = s;
+}
+
+int main(void) {   
+	// Matriz
+	WS2812_DDR |= (1 << WS2812_PIN);
+
+	// Buzzer: PB2 salida, Timer1 en CTC (apagado hasta que suene)
+	DDRB |= (1 << PB2);
+	TCCR1A = 0;
+	TCCR1B = (1 << WGM12);
+
+	// Boton del joystick: entrada con pull-up
+	DDRD  &= ~(1 << JOY_SW);
+	PORTD |=  (1 << JOY_SW);
+
+	ADC_init();
+	semilla_init();
+
+	// EEPROM: 0xFF = nunca se escribio
+	record = eeprom_read_byte(&ee_record);
+	if (record == 0xFF) {
+		record = 0;
+		eeprom_update_byte(&ee_record, 0);
+		eeprom_update_byte(&ee_ultimo, 0);
+	}
+
+	ws2812_clear();
+
+	uint8_t estado = E_MENU;
+	while (1) {
+		switch (estado) {
+			case E_MENU:           estado = estado_menu();           break;
+			case E_JUEGO:          estado = estado_juego();          break;
+			case E_RECORD:         estado = estado_record();         break;
+			case E_SALIR:          estado = estado_salir();          break;
+			case E_TERMINADO:      estado = estado_terminado();      break;
+			case E_RECORD_MARCADO: estado = estado_record_marcado(); break;
+			default:               estado = E_MENU;                  break;
 		}
 	}
-	ws2812_show(); // Refrescaa la matriz
 }
-
-// Muestra "boton" Verde Oscuro
-void ws2812_VerdeOscuro() {
-	
-	uint8_t r = 25;
-	uint8_t g = 60;
-	uint8_t b = 62;
-	
-	for (uint8_t i = 16; i <= 40; i++) {
-		if (i == 17){
-			i += 7;
-			}else{
-				if (i == 26){
-					i += 6;
-				}else{
-					if (i == 34){
-						i += 6;
-						}else{
-							leds[i].r = r;
-							leds[i].b = b;
-							leds[i].g = g;
-						}
-				}
-			}
-	}
-	ws2812_show(); // Refrescaa la matriz
-}
-
-// Muestra "boton" Azul
-void ws2812_Azul() {
-	
-	uint8_t r = 18;
-	uint8_t g = 78;
-	uint8_t b = 137;
-	
-	for (uint8_t i = 41; i <= 57; i++) {
-		if (i == 42){
-			i += 6;
-			}else{
-			if (i == 51){
-				i += 5;
-				}else{
-					leds[i].r = r;
-					leds[i].b = b;
-					leds[i].g = g;
-				}
-			}
-	}
-	ws2812_show(); // Refrescaa la matriz
-}
-
-
-// Muestra "boton" Violeta
-void ws2812_Violeta() {
-	
-	uint8_t r = 104;
-	uint8_t g = 56;
-	uint8_t b = 108;
-	
-	for (uint8_t i = 51; i <= 61; i++) {
-		if (i == 53){
-			i += 5;
-			}else{
-				leds[i].r = r;
-				leds[i].b = b;
-				leds[i].g = g;
-			}
-		}
-	}
-	ws2812_show(); // Refrescaa la matriz
-}
-
