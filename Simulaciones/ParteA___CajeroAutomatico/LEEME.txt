@@ -1,3 +1,12 @@
 Cuentas iniciales para simular por UART: 
 RFID - F37E192D/ PIN - 1234/ SALDO - 1000; 
-RFID - 03C83028/ PIN - 0007/ SALDP - 2500
+RFID - 03C83028/ PIN - 0007/ SALDO - 2500;
+RFID - 65B29AE3/ PIN - 4321/ SALDO - 500
+A : saldo, B : deposito, C : retiro, D : salir.
+# - confirma; * - borra. Arranque SPI
+ENABLE1 para simular UID por UART.
+
+-Para realizar la simulación se debe ingresar en el monitor serial la palabra: ENABLE1 
+-Una vez en el modo simulación ingreso también por UART una de las direcciones hexadecimales de nuestras tarjetas ejemplo: 65B29AE3
+-A partir de este momento ya se realizará todo el trabajo y la introducción de PIN y saldos por el teclado Matricial.
+-Si no activamos el modo simulación, todo lo que se muestra por la LCD se mostrará también por UART 

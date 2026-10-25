@@ -471,3 +471,160 @@ uint8_t rfid_uid(uint8_t uid[4]) {
     exchange(halt,4,0,rx,&len); /* HLTA correcto termina sin respuesta. */
     return 1;
 }
+
+/* ====================================================================
+ * CAJERO: AUTENTICACION Y OPERACIONES
+ * ==================================================================== */
+/* Cajero de laboratorio. Flujo funcional por contexto de pantalla */
+
+
+
+
+#include <string.h>
+enum {WAIT_CARD,ENTER_PIN,MENU,AMOUNT,SAVING};
+static uint8_t screen,uart_mode,storage_ok,attempts,locked,message_on;
+static int8_t current=-1;
+static char input[10],operation;
+static uint8_t digits;
+static uint32_t activity,lock_until,message_until,last_rfid,last_probe;
+static char line[32];static uint8_t line_len,discard_line;
+static void redraw(void);
+/* Limpia el ingreso temporal de PIN o monto. */
+static void clear_input(void) {memset(input,0,sizeof input);digits=0;}
+/* Presenta mensaje temporal y activa indicador; UART se duplica en LCD. */
+static void message(const char *a,const char *b,uint8_t good) {
+    lcd_lines(a,b);indicate(good,1200);message_until=millis()+1200;message_on=1;
+    uart_puts(good?"OK ":"ERROR ");uart_puts(a);uart_puts("\r\n");
+}
+/* Cierra sesion y borra entrada y contador de intentos. */
+static void end_session(void) {current=-1;screen=WAIT_CARD;attempts=0;clear_input();}
+/* Dibuja pantalla segun contexto, sin mostrar digitos reales del PIN. */
+static void redraw(void) {
+    char text[17];
+    if(!storage_ok){lcd_lines("ERROR EEPROM","Revisar memoria");return;}
+    if(locked){lcd_lines("Acceso bloqueado","Espere 30 s");return;}
+    switch(screen) {
+    case WAIT_CARD:lcd_lines("Presente tarjeta",uart_mode?"UID por UART":"RFID SPI activo");break;
+    case ENTER_PIN:
+        strcpy(text,"PIN: ");for(uint8_t i=0;i<digits;i++)text[5+i]='*';text[5+digits]=0;
+        lcd_lines(text,"#OK *Borra DSale");break;
+    case MENU:lcd_lines("A Saldo B Depos.","C Retiro D Salir");break;
+    case AMOUNT:
+        strcpy(text,"Monto: ");memcpy(text+7,input,digits);text[7+digits]=0;
+        lcd_lines(operation=='B'?"Deposito # OK":"Retiro # OK",text);break;
+    case SAVING:lcd_lines("Guardando saldo","Espere...");break;
+    }
+}
+/* Identifica tarjeta registrada y abre pantalla de ingreso de PIN. */
+static void identify(const uint8_t uid[4]) {
+    if(!storage_ok||locked||screen!=WAIT_CARD)return;
+    int8_t i=accounts_find(uid);if(i<0){message("UID desconocido","Presente tarjeta",0);return;}
+    current=i;screen=ENTER_PIN;attempts=0;clear_input();activity=millis();message_on=0;redraw();uart_puts("PIN requerido\r\n");
+}
+/* Procesa teclado: autenticacion, menu, monto y confirmacion. */
+static void key(char c) {
+    if(!storage_ok||locked||screen==WAIT_CARD||screen==SAVING)return;
+    activity=millis();message_on=0;
+    if(c=='D'){end_session();redraw();uart_puts("Sesion cerrada\r\n");return;}
+    if(screen==MENU) {
+        if(c=='A') {
+            char balance[11];lcd_number(balance,accounts[(uint8_t)current].balance);
+            message("Saldo disponible",balance,1);uart_puts("SALDO ");uart_u32(accounts[(uint8_t)current].balance);uart_puts("\r\n");
+        } else if(c=='B'||c=='C'){operation=c;screen=AMOUNT;clear_input();redraw();}
+        return;
+    }
+    if(c=='*'){if(digits)input[--digits]=0;redraw();return;}
+    if(c>='0'&&c<='9') {
+        uint8_t max=screen==ENTER_PIN?4:9;
+        if(digits<max){input[digits++]=c;input[digits]=0;redraw();}
+        else message("Demasiados dig.","* borrar D salir",0);
+        return;
+    }
+    if(c!='#')return;
+    if(screen==ENTER_PIN) {
+        if(digits!=4){message("PIN: 4 digitos","Complete el PIN",0);return;}
+        if(!memcmp(input,accounts[(uint8_t)current].pin,4)) {
+            screen=MENU;clear_input();attempts=0;message("PIN correcto","Bienvenido",1);
+        } else {
+            clear_input();attempts++;
+            if(attempts>=3) {
+                end_session();locked=1;lock_until=millis()+LOCK_MS;alarm_start();
+                message_on=0;redraw();uart_puts("ERROR 3 intentos; bloqueo 30 s\r\n");
+            } else message("PIN incorrecto","Intente otra vez",0);
+        }
+    } else if(screen==AMOUNT) {
+        uint32_t amount=0;
+        for(uint8_t i=0;i<digits;i++)amount=amount*10+(input[i]-'0');
+        if(!digits||!amount){message("Monto invalido","Debe ser mayor 0",0);return;}
+        uint32_t balance=accounts[(uint8_t)current].balance;
+        if(operation=='C'&&amount>balance){message("Fondos insufic.","Corrija el monto",0);return;}
+        if(operation=='B'&&amount>MAX_BALANCE-balance){message("Excede limite","Max 999999999",0);return;}
+        uint32_t next=operation=='B'?balance+amount:balance-amount;
+        if(!accounts_save(current,next)){message("Error guardado","Intente de nuevo",0);return;}
+        screen=SAVING;clear_input();redraw();
+    }
+}
+/* Convierte caracter hexadecimal a valor 0..15; 255 si invalido. */
+static uint8_t hex_digit(char c) {if(c>='0'&&c<='9')return c-'0';if(c>='A'&&c<='F')return c-'A'+10;if(c>='a'&&c<='f')return c-'a'+10;return 255;}
+/* Interpreta STATUS, ENABLE1, ENABLE0 o UID recibido por UART. */
+static void command(void) {
+    line[line_len]=0;
+    if(!strcmp(line,"STATUS")) {
+        uart_puts("MODO=");uart_puts(uart_mode?"UART":"SPI");uart_puts(" RC522=");uart_puts(rfid_present()?"SI":"AUSENTE");
+        uart_puts(" LCD=");uart_puts(lcd_ok()?"OK":"ERROR");uart_puts(" EEPROM=");uart_puts(storage_ok?"OK":"ERROR");
+        uart_puts(" SESION=");uart_puts(screen==WAIT_CARD?"NO":"SI");uart_puts(" BLOQUEO=");uart_puts(locked?"SI\r\n":"NO\r\n");return;
+    }
+    if(!strcmp(line,"ENABLE1")||!strcmp(line,"ENABLE0")) {
+        if(screen!=WAIT_CARD){uart_puts("ERROR sesion activa\r\n");return;}
+        uart_mode=line[6]=='1';uart_puts(uart_mode?"OK modo UART\r\n":"OK modo SPI\r\n");message_on=0;redraw();return;
+    }
+    if(line_len!=8){uart_puts("ERROR comando o UID invalido\r\n");return;}
+    uint8_t uid[4];
+    for(uint8_t i=0;i<4;i++) {
+        uint8_t a=hex_digit(line[2*i]),b=hex_digit(line[2*i+1]);
+        if(a==255||b==255){uart_puts("ERROR UID hexadecimal\r\n");return;}uid[i]=(a<<4)|b;
+    }
+    if(!uart_mode){uart_puts("UID ignorado: modo SPI\r\n");return;}
+    if(locked){uart_puts("ERROR acceso bloqueado\r\n");return;}
+    if(screen!=WAIT_CARD){uart_puts("ERROR sesion activa\r\n");return;}
+    identify(uid);
+}
+/* Procesa UART en lineas sin bloquear el resto del cajero. */
+static void serial_task(void) {
+    if(uart_fault()){discard_line=1;line_len=0;uart_puts("ERROR UART; descarte hasta fin de linea\r\n");}
+    int16_t c;uint8_t quota=64;
+    while(quota--&&(c=uart_get())>=0) {
+        if(c=='\r'||c=='\n') {
+            if(discard_line) {discard_line=0;uart_puts("ERROR linea descartada\r\n");}
+            else if(line_len)command();line_len=0;
+        } else if(!discard_line) {
+            if(c<32||c>126||line_len>=sizeof(line)-1){discard_line=1;line_len=0;}
+            else line[line_len++]=(char)c;
+        }
+    }
+}
+/* Inicializa componentes y ejecuta tareas periodicas del cajero. */
+int main(void) {
+    hal_init();storage_ok=accounts_init();lcd_init();rfid_init();end_session();redraw();
+    uart_puts("CAJERO ATmega328P 16MHz\r\nArranque SPI; ENABLE1 para simulacion\r\n");
+    for(;;) {
+        indicators_task();serial_task();
+        uint32_t now=millis();
+        if(locked&&(int32_t)(now-lock_until)>=0){locked=0;redraw();}
+        uint8_t saved=accounts_task();
+        if(saved) {
+            if(saved==1){screen=MENU;activity=now;message(operation=='B'?"Deposito exitoso":"Retiro exitoso","Saldo guardado",1);}
+            else {storage_ok=0;end_session();message("Error EEPROM","Revisar memoria",0);}
+        }
+        if(screen!=WAIT_CARD&&screen!=SAVING&&now-activity>=SESSION_MS){end_session();message("Sesion expirada","Presente tarjeta",0);}
+        if(message_on&&(int32_t)(now-message_until)>=0){message_on=0;redraw();}
+        char c=keypad_poll();if(c)key(c);
+        if(!uart_mode&&!locked&&storage_ok&&screen==WAIT_CARD) {
+            if(!rfid_present()&&now-last_probe>=2000){last_probe=now;rfid_init();}
+            if(rfid_present()&&now-last_rfid>=100) {
+                last_rfid=now;uint8_t uid[4],r=rfid_uid(uid);
+                if(r==1)identify(uid);else if(r==2)message("UID no es 4 bytes","Tarjeta no admit.",0);
+            }
+        }
+    }
+}

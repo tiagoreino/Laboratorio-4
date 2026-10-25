@@ -1,0 +1,261 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="cajero-moore" name="Cajero · Moore conceptual">
+    <mxGraphModel dx="2835" dy="1219" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2800" pageHeight="2830" background="#111111" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="heading" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;fontSize=40;fontStyle=1;strokeColor=none;fillColor=#111111;spacing=25;verticalAlign=middle;" value="Cajero automático ATmega328P" vertex="1">
+          <mxGeometry height="100" width="2800" as="geometry" />
+        </mxCell>
+        <mxCell id="background" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;fillColor=#111111;strokeColor=none;locked=1;connectable=0;" value="" vertex="1">
+          <mxGeometry height="2730" width="2800" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="initial" edge="1" parent="1" source="init" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;entryX=0;entryY=0.5;" target="E0" value="Inicio">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="id" edge="1" parent="1" source="E0" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;" target="E1" value="UID registrado&lt;br&gt;∧ habilitado">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pin" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=1;exitY=0.7;entryX=1;entryY=0.3;dashed=1;" target="E7" value="Gpin · r=E2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1640" y="580" />
+              <mxPoint x="1640" y="1050" />
+              <mxPoint x="1950" y="1230" />
+              <mxPoint x="1950" y="2090" />
+              <mxPoint x="1880" y="2260" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lock" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="E8" value="# ∧ PIN incorrecto&lt;br&gt;3.er intento">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1660" y="550" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="unlock" edge="1" parent="1" source="E8" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.5;exitY=0;entryX=0.5;entryY=0;" target="E0" value="30 s cumplidos&lt;br&gt;locked=0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1940" y="570" />
+              <mxPoint x="1870" y="220" />
+              <mxPoint x="880" y="220" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="menuA" edge="1" parent="1" source="E2" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0;exitY=0.35;entryX=1;entryY=0.35;" target="E3" value="A">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="saldoEnd" edge="1" parent="1" source="E3" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=1;exitY=0.85;entryX=0;entryY=0.85;" target="E2" value="1,2 s">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="980" y="1210" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="menuB" edge="1" parent="1" source="E2" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.15;exitY=1;entryX=0.5;entryY=0;" target="E4" value="B">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1010" y="1280" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="menuC" edge="1" parent="1" source="E2" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.85;exitY=1;entryX=0.5;entryY=0;" target="E5" value="C">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1480" y="1270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="deposit" edge="1" parent="1" source="E4" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="E6" value="&lt;div&gt;Funciones:&lt;/div&gt;# ∧ Gdep&lt;br&gt;∧ accounts_save()=1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="870" y="1800" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="withdraw" edge="1" parent="1" source="E5" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.5;exitY=1;entryX=1;entryY=0.5;" target="E6" value="&lt;div&gt;Funciones:&lt;/div&gt;# ∧ Gret&lt;br&gt;∧ accounts_save()=1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1570" y="1800" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="save" edge="1" parent="1" source="E6" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="E7" value="saved = 1 / 2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1360" y="2200" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="result" edge="1" parent="1" source="E7" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0;exitY=0.2;entryX=0.8;entryY=1;dashed=1;" target="E2" value="1,2 s ∧ r=E2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1460" y="2250" />
+              <mxPoint x="1460" y="1470" />
+              <mxPoint x="1330" y="1240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE0" edge="1" parent="1" source="E0" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.15;exitY=0.1;entryX=0.15;entryY=0.9;" target="E0" value="P0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="720" y="270" />
+              <mxPoint x="720" y="470" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE1" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.15;exitY=0.1;entryX=0.15;entryY=0.9;" target="E1" value="P1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1270" y="250" />
+              <mxPoint x="1270" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE2" edge="1" parent="1" source="E2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.75;exitY=0.05;entryX=1;entryY=0.6;innerLoopWaypoints=1;" target="E2" value="P2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1288.3" y="820" />
+              <mxPoint x="1360" y="820" />
+              <mxPoint x="1360" y="1080" />
+              <mxPoint x="1347.7" y="1080" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE3" edge="1" parent="1" source="E3" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.15;exitY=0.1;entryX=0.15;entryY=0.9;" target="E3" value="P3">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="610" y="850" />
+              <mxPoint x="610" y="1140" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE4" edge="1" parent="1" source="E4" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.15;exitY=0.1;entryX=0.15;entryY=0.9;" target="E4" value="P4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="1380" />
+              <mxPoint x="640" y="1660" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE5" edge="1" parent="1" source="E5" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.85;exitY=0.1;entryX=0.85;entryY=0.9;" target="E5" value="P5">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1860" y="1380" />
+              <mxPoint x="1900" y="1640" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE6" edge="1" parent="1" source="E6" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.15;exitY=0.1;entryX=0.15;entryY=0.9;" target="E6" value="P6">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1020" y="1770" />
+              <mxPoint x="1020" y="2050" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE7" edge="1" parent="1" source="E7" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.85;exitY=0.1;entryX=0.85;entryY=0.9;" target="E7" value="P7">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1900" y="2170" />
+              <mxPoint x="1900" y="2450" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="PE8" edge="1" parent="1" source="E8" style="edgeStyle=none;rounded=1;curved=1;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#EEEEEE;strokeWidth=2;endArrow=classic;endFill=1;labelBackgroundColor=#111111;exitX=0.85;exitY=0.1;entryX=0.85;entryY=0.9;" target="E8" value="P8">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1990" y="630" />
+              <mxPoint x="1990" y="900" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;strokeColor=none;fillColor=none;fontSize=25;spacing=0;" value="9 estados conceptuales · 3 cuentas RFID · LCD 16×2 · Persistencia EEPROM." vertex="1">
+          <mxGeometry height="50" width="2740" x="30" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="states" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;align=center;verticalAlign=middle;spacing=5;fontSize=25;" value="&lt;b&gt;ESTADOS&lt;/b&gt;" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="statesb" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;" value="E0 → ESPERA TARJETA&lt;br&gt;E1 → INGRESO PIN&lt;br&gt;E2 → MENÚ&lt;br&gt;E3 → CONSULTA SALDO *&lt;br&gt;E4 → DEPÓSITO&lt;br&gt;E5 → RETIRO&lt;br&gt;E6 → GUARDANDO EEPROM&lt;br&gt;E7 → RESULTADO / MENSAJE *&lt;br&gt;E8 → BLOQUEO *&lt;br&gt;&lt;br&gt;&lt;b&gt;* Estados conceptuales.&lt;/b&gt;&lt;br&gt;Representan pantallas y banderas." vertex="1">
+          <mxGeometry height="427" width="540" x="30" y="258" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;align=center;verticalAlign=middle;spacing=5;fontSize=25;" value="&lt;b&gt;ENTRADAS&lt;/b&gt;" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="inputsb" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;" value="&lt;b&gt;Tarjeta:&lt;/b&gt; UID de 4 bytes.&lt;br&gt;SPI: RC522; UART: 8 hex + CR/LF.&lt;br&gt;&lt;br&gt;&lt;b&gt;Teclado 4×4:&lt;/b&gt;&lt;br&gt;0…9: ingresar; #: confirmar.&lt;br&gt;*: borrar el último dígito.&lt;br&gt;A: saldo; B: depósito; C: retiro.&lt;br&gt;D: cerrar sesión (salvo E0/E6/E8).&lt;br&gt;&lt;br&gt;&lt;b&gt;Eventos internos:&lt;/b&gt;&lt;br&gt;millis(); accounts_task() = 0/1/2.&lt;br&gt;&lt;br&gt;&lt;b&gt;UART:&lt;/b&gt; ENABLE1, ENABLE0,&lt;br&gt;STATUS; no ingresa PIN ni monto." vertex="1">
+          <mxGeometry height="437" width="540" x="30" y="768" as="geometry" />
+        </mxCell>
+        <mxCell id="outputs" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;align=center;verticalAlign=middle;spacing=5;fontSize=25;" value="&lt;b&gt;SALIDAS&lt;/b&gt;" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="1230" as="geometry" />
+        </mxCell>
+        <mxCell id="outputsb" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;" value="&lt;b&gt;Dentro de cada círculo:&lt;/b&gt;&lt;br&gt;pantalla asociada al contexto.&lt;br&gt;LCD se refleja por UART;&lt;br&gt;el PIN se muestra como asteriscos.&lt;br&gt;&lt;br&gt;&lt;b&gt;LED verde:&lt;/b&gt; PB0.&lt;br&gt;&lt;b&gt;LED rojo:&lt;/b&gt; PD6.&lt;br&gt;&lt;b&gt;Buzzer activo:&lt;/b&gt; PD7.&lt;br&gt;&lt;br&gt;message(good): verde o rojo&lt;br&gt;por 1,2 s según el resultado.&lt;br&gt;alarm_start(): rojo + buzzer 3 s.&lt;br&gt;&lt;br&gt;indicators_task() apaga por plazo.&lt;br&gt;Los indicadores NO permanecen&lt;br&gt;encendidos durante todo E8 (30 s).&lt;br&gt;No se asigna LED = 1 a todo E2." vertex="1">
+          <mxGeometry height="482" width="540" x="30" y="1288" as="geometry" />
+        </mxCell>
+        <mxCell id="guards" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;align=center;verticalAlign=middle;spacing=5;fontSize=25;" value="&lt;b&gt;GUARDAS Y PERMANENCIAS&lt;/b&gt;" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="1800" as="geometry" />
+        </mxCell>
+        <mxCell id="guardsb" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;" value="&lt;b&gt;P0:&lt;/b&gt; sin UID aceptado → E0.&lt;br&gt;&lt;b&gt;P1:&lt;/b&gt; edición PIN / tecla sin transición.&lt;br&gt;&lt;b&gt;P2:&lt;/b&gt; tecla distinta de A/B/C/D.&lt;br&gt;&lt;b&gt;P3:&lt;/b&gt; mensaje de saldo vigente.&lt;br&gt;&lt;b&gt;P4/P5:&lt;/b&gt; editar monto o tecla ignorada.&lt;br&gt;&lt;b&gt;P6:&lt;/b&gt; accounts_task() = 0.&lt;br&gt;&lt;b&gt;P7:&lt;/b&gt; message_on y plazo vigente.&lt;br&gt;&lt;b&gt;P8:&lt;/b&gt; locked y t &amp;lt; lock_until.&lt;br&gt;&lt;br&gt;Los bucles incluyen ausencia de evento.&lt;br&gt;Salidas globales T/D/X tienen prioridad&lt;br&gt;sobre la permanencia correspondiente.&lt;br&gt;&lt;br&gt;&lt;b&gt;Gpin:&lt;/b&gt; # ∧ 4 dígitos ∧ PIN correcto.&lt;br&gt;Habilitado: storage_ok ∧ ¬locked.&lt;br&gt;&lt;br&gt;&lt;b&gt;Gdep:&lt;/b&gt; 1 ≤ monto ≤ MAX − saldo.&lt;br&gt;&lt;b&gt;Gret:&lt;/b&gt; 1 ≤ monto ≤ saldo.&lt;br&gt;MAX = 999999999; monto: ≤9 dígitos.&lt;br&gt;&lt;br&gt;&lt;b&gt;T:&lt;/b&gt; now − activity ≥ 120000 ms.&lt;br&gt;Aplica a ENTER_PIN, MENU, AMOUNT;&lt;br&gt;incluye sus pantallas E3/E7.&lt;br&gt;No se evalúa en WAIT_CARD/SAVING.&lt;br&gt;&lt;br&gt;Cada tecla admitida por key() reinicia&lt;br&gt;activity, incluso una tecla ignorada.&lt;br&gt;PIN incompleto no suma intentos.&lt;br&gt;PIN incorrecto borra entrada;&lt;br&gt;los errores de monto la conservan." vertex="1">
+          <mxGeometry height="932" width="540" x="30" y="1858" as="geometry" />
+        </mxCell>
+        <mxCell id="aux" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;align=center;verticalAlign=middle;spacing=5;fontSize=25;" value="&lt;b&gt;ACCIONES AUXILIARES&lt;/b&gt;" vertex="1">
+          <mxGeometry height="58" width="740" x="2030" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="auxb" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;" value="&lt;b&gt;Arranque:&lt;/b&gt; HAL → accounts_init() →&lt;br&gt;LCD → RC522 → end_session() → E0.&lt;br&gt;Modo inicial SPI (uart_mode = 0).&lt;br&gt;&lt;br&gt;&lt;b&gt;Persistencia:&amp;nbsp;&lt;/b&gt;E6 escribe por pasos en el slot alterno.&lt;br&gt;El saldo RAM cambia solo al verificar OK.&lt;br&gt;&lt;br&gt;&lt;b&gt;Sesion:&lt;/b&gt; end_session() pone current = −1,&lt;br&gt;screen = WAIT_CARD, attempts = 0;&lt;br&gt;borra PIN/monto. No reinicia saldos.&lt;br&gt;&lt;br&gt;&lt;b&gt;RFID en espera:&lt;/b&gt; consulta cada ≥100 ms;&lt;br&gt;si ausente, reinicializa cada ≥2 s.&lt;br&gt;Sin tarjeta / fallo de lectura r = 0: E0.&lt;br&gt;UID largo r = 2: mensaje de error (X0).&lt;br&gt;&lt;br&gt;&lt;b&gt;UART:&lt;/b&gt; ENABLE1 → UID simulado;&lt;br&gt;ENABLE0 → lector SPI. Se aceptan solo&lt;br&gt;si screen = WAIT_CARD, también en E8&lt;br&gt;porque su screen subyacente es WAIT_CARD.&lt;br&gt;El cambio no elimina locked.&lt;br&gt;STATUS informa sin transición.&lt;br&gt;UID UART en SPI se ignora; formato,&lt;br&gt;sesión activa o bloqueo: aviso por UART.&lt;br&gt;UART defectuosa: descarta hasta CR/LF.&lt;br&gt;&lt;br&gt;&lt;b&gt;Entradas simultáneas:&lt;/b&gt; el bucle ejecuta&lt;br&gt;indicadores → UART → desbloqueo → EEPROM&lt;br&gt;→ expiración → fin de mensaje → teclado&lt;br&gt;→ RFID. Conservar este orden al interpretar&lt;br&gt;coincidencias de eventos." vertex="1">
+          <mxGeometry height="977" width="740" x="2030" y="258" as="geometry" />
+        </mxCell>
+        <mxCell id="errors" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;align=center;verticalAlign=middle;spacing=5;fontSize=25;" value="&lt;b&gt;RESULTADOS, ERRORES Y RETORNO r&lt;/b&gt;" vertex="1">
+          <mxGeometry height="58" width="740" x="2030" y="1260" as="geometry" />
+        </mxCell>
+        <mxCell id="errorsb" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;" value="&lt;b&gt;E7 es una vista temporal:&lt;/b&gt; message_on = 1.&lt;br&gt;La variable r de este dibujo identifica el&lt;br&gt;contexto de retorno; no existe en el código.&lt;br&gt;&lt;br&gt;&lt;b&gt;Flechas X compactadas (regla completa):&lt;/b&gt;&lt;br&gt;X0: E0 → E7(r=E0): UID desconocido/largo.&lt;br&gt;X1: E1 → E7(r=E1): PIN incompleto,&lt;br&gt;exceso de dígitos o PIN incorrecto (&amp;lt;3).&lt;br&gt;X4: E4 → E7(r=E4): monto vacío/cero,&lt;br&gt;exceso de dígitos, excede MAX o save=0.&lt;br&gt;X5: E5 → E7(r=E5): monto vacío/cero,&lt;br&gt;exceso de dígitos, fondos bajos o save=0.&lt;br&gt;&lt;br&gt;&lt;b&gt;Retorno al vencer 1,2 s:&lt;/b&gt;&lt;br&gt;E7 → r ∈ {E0,E1,E2,E4,E5}.&lt;br&gt;PIN correcto / guardado OK: r=E2.&lt;br&gt;Expiración: r=E0.&lt;br&gt;Fallo EEPROM al guardar: r=E0,&lt;br&gt;storage_ok=0; después, pantalla fija de error.&lt;br&gt;&lt;br&gt;&lt;b&gt;Interrupción del mensaje:&lt;/b&gt; el teclado no&lt;br&gt;espera 1,2 s; key() cancela message_on&lt;br&gt;y procesa la tecla según screen subyacente.&lt;br&gt;En E0, un UID válido también lo cancela.&lt;br&gt;Una tecla ignorada puede dejar visible&lt;br&gt;el texto previo; no fuerza redraw().&lt;br&gt;E3 comparte estas reglas de interrupción.&lt;br&gt;&lt;br&gt;&lt;b&gt;Fallo inicial EEPROM:&lt;/b&gt; E0 deshabilitado,&lt;br&gt;LCD «ERROR EEPROM / Revisar memoria».&lt;br&gt;No hay nuevo estado ni reintento automático.&lt;br&gt;Fallo LCD: UART sigue; RC522 ausente:&lt;br&gt;posible simulación UART con ENABLE1." vertex="1">
+          <mxGeometry height="1062" width="740" x="2030" y="1318" as="geometry" />
+        </mxCell>
+        <mxCell id="uids" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;align=center;verticalAlign=middle;spacing=5;fontSize=25;" value="&lt;b&gt;CUENTAS&lt;/b&gt;" vertex="1">
+          <mxGeometry height="58" width="740" x="2030" y="2405" as="geometry" />
+        </mxCell>
+        <mxCell id="uidsb" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;" value="&lt;b&gt;UID iniciales reales:&lt;/b&gt;&lt;br&gt;1: F37E192D · 2: 03C83028 · 3: 65B29AE3.&lt;br&gt;EEPROM válida conserva PIN y saldo." vertex="1">
+          <mxGeometry height="137" width="740" x="2030" y="2463" as="geometry" />
+        </mxCell>
+        <mxCell id="E0" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E0&lt;br&gt;ESPERA TARJETA&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;Presente tarjeta&lt;br&gt;UART / RFID SPI" vertex="1">
+          <mxGeometry height="240" width="240" x="790" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="E1" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E1&lt;br&gt;INGRESO PIN&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;PIN: ****&lt;br&gt;#OK *Borra DSale" vertex="1">
+          <mxGeometry height="240" width="240" x="1330" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="E8" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E8&lt;br&gt;BLOQUEO *&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;Acceso bloqueado&lt;br&gt;Espere 30 s" vertex="1">
+          <mxGeometry height="240" width="240" x="1720" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="E2" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E2&lt;br&gt;MENÚ&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;A:Saldo B:Depos.&lt;br&gt;C:Retiro D:Salir" vertex="1">
+          <mxGeometry height="240" width="240" x="1110" y="900" as="geometry" />
+        </mxCell>
+        <mxCell id="E3" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E3&lt;br&gt;CONSULTA SALDO *&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;Saldo disponible&lt;br&gt;saldo actual" vertex="1">
+          <mxGeometry height="240" width="240" x="660" y="900" as="geometry" />
+        </mxCell>
+        <mxCell id="E4" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E4&lt;br&gt;DEPÓSITO&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;Deposito # OK&lt;br&gt;Monto: ingreso" vertex="1">
+          <mxGeometry height="240" width="240" x="710" y="1430" as="geometry" />
+        </mxCell>
+        <mxCell id="E5" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E5&lt;br&gt;RETIRO&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;Retiro # OK&lt;br&gt;Monto: ingreso" vertex="1">
+          <mxGeometry height="240" width="240" x="1570" y="1430" as="geometry" />
+        </mxCell>
+        <mxCell id="E6" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E6&lt;br&gt;GUARDANDO&lt;br&gt;EEPROM&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;Guardando saldo&lt;br&gt;Espere..." vertex="1">
+          <mxGeometry height="240" width="240" x="1110" y="1810" as="geometry" />
+        </mxCell>
+        <mxCell id="E7" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;perimeter=ellipsePerimeter;align=center;verticalAlign=middle;spacing=10;fontSize=22;strokeWidth=2.3;" value="&lt;b&gt;E7&lt;br&gt;RESULTADO *&lt;/b&gt;&lt;br&gt;────────────&lt;br&gt;Mensaje OK/error&lt;br&gt;según contexto r" vertex="1">
+          <mxGeometry height="240" width="240" x="1570" y="2200" as="geometry" />
+        </mxCell>
+        <mxCell id="init" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;shape=ellipse;fillColor=#FFFFFF;strokeColor=#FFFFFF;" value="" vertex="1">
+          <mxGeometry height="18" width="18" x="660" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="model" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;strokeColor=none;fillColor=none;fontSize=23;spacing=0;" value="&lt;b&gt;MODELO CONCEPTUAL:&lt;/b&gt;&lt;br&gt;Cada círculo asocia contexto y pantalla.&lt;br&gt;Datos, temporizadores y banderas completan&lt;br&gt;el estado extendido.&lt;br&gt;Flechas discontinuas: mensaje y retorno." vertex="1">
+          <mxGeometry height="175" width="950" x="640" y="620" as="geometry" />
+        </mxCell>
+        <mxCell id="global" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;strokeColor=none;fillColor=none;fontSize=23;spacing=0;" value="&lt;b&gt;TRANSICIONES GLOBALES · REGLAS COMPLETAS&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;D:&lt;/b&gt; desde E1/E2/E3/E4/E5 y E7 con sesión → E0.&lt;br&gt;&lt;b&gt;T:&lt;/b&gt; desde sesión activa (salvo E6) → E7(r=E0),&lt;br&gt;«Sesion expirada», rojo 1,2 s; end_session().&lt;br&gt;&lt;b&gt;X:&lt;/b&gt; desde E0/E1/E4/E5 → E7(r=origen): ver cuadro derecho.&lt;br&gt;&lt;b&gt;E7 → r:&lt;/b&gt; a los 1,2 s; r=E0/E1/E2/E4/E5.&lt;br&gt;Estas flechas se expresan como reglas para evitar cruces.&lt;br&gt;&lt;br&gt;&lt;b&gt;E8:&lt;/b&gt; locked=1 sobre WAIT_CARD; ignora teclado/UID.&lt;br&gt;Rojo y buzzer solo los primeros 3 s; bloqueo total 30 s." vertex="1">
+          <mxGeometry height="430" width="850" x="640" y="2160" as="geometry" />
+        </mxCell>
+        <mxCell id="enum" parent="1" style="whiteSpace=wrap;html=1;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;strokeColor=#DDDDDD;fillColor=#111111;spacing=18;align=left;verticalAlign=top;strokeColor=none;fillColor=none;fontSize=22;spacing=0;" value="&lt;b&gt;CORRESPONDENCIA CON EL PROGRAMA&lt;/b&gt;&lt;br&gt;WAIT_CARD ↔ E0 · ENTER_PIN ↔ E1 · MENU ↔ E2.&lt;br&gt;AMOUNT + operation=&#39;B&#39; ↔ E4 · AMOUNT + &#39;C&#39; ↔ E5.&lt;br&gt;SAVING ↔ E6. E3: MENU + message_on (saldo).&lt;br&gt;E7: message_on + contexto subyacente. E8: locked.&lt;br&gt;E3/E7 pueden ser interrumpidos por entradas admitidas." vertex="1">
+          <mxGeometry height="140" width="1350" x="640" y="2600" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
