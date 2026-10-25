@@ -1,0 +1,244 @@
+/* Maestro - ATmega328P.
+ * AVR-GCC / Microchip Studio / 16 MHz.
+ */
+#define F_CPU 16000000UL
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <avr/wdt.h>
+#include <util/atomic.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#define LCD_ADDR_7BIT       0x27
+#define LCD_BACKLIGHT_HIGH     1
+#define NTC_TO_GND             1
+#define NTC_TRIP_ADC         204U
+#define NTC_SAFE_ADC         235U
+#define LDR_DETECT_LOW         1
+#define LDR_LOW              400U
+#define LDR_HIGH             500U
+#define SENSOR_PERIOD_MS      10UL
+#define DEBOUNCE_MS           30UL
+#define SPI_MAX_ATTEMPTS       3
+#define SPI_REPLY_WAIT_MS      2UL
+#define SPI_BYTE_TIMEOUT_MS    5UL
+#define SPI_HEARTBEAT_MS      80UL
+#define JAM_TIMEOUT_MS      4000UL
+
+enum { C_SYNC=1,C_START,C_STOP,C_EMERG,C_PWM,C_PISTON,C_STATUS };
+enum { S_STOP,S_RUN,S_PISTON,S_THERMAL,S_LINK,S_EMERGENCY,S_JAM };
+static volatile uint32_t ticks;
+static volatile uint8_t tx_head,tx_tail;
+static char tx_ring[256];
+static uint8_t state=S_STOP, thermal, sensor_fault, ready_sensors;
+static uint8_t estop_latched;
+static uint8_t thermal_latched, jam_latched, jam_watching;
+static uint32_t jam_since;
+static uint8_t link_ok, need_sync=1, want_start, urgent, sequence;
+static uint8_t pwm_target, pwm_sent, pwm_valid, piece, piece_armed=1, piece_pending;
+static uint8_t btn_raw,btn_stable,ldr_raw,ldr_stable;
+static uint16_t analog[3];
+static uint32_t count, sensor_at,btn_at,ldr_at,heartbeat_at,recover_at;
+static const char *last_command="BOOT";
+static uint8_t debug_cmd,debug_rx0,debug_rx1;
+
+/* TIMER2_COMPA_vect — Interrupción de comparación del Timer2: incrementa ticks cada 1 ms.
+ * Sin parámetros ni retorno. Proporciona la base temporal usada por las tareas; la lectura de 32 bits se protege en now_ms.
+ */
+ISR(TIMER2_COMPA_vect) { ++ticks; }
+/* USART_UDRE_vect — Interrupción de registro de transmisión UART vacío: envía el siguiente carácter de tx_ring.
+ * Sin parámetros ni retorno. Avanza tx_tail; si la cola está vacía, deshabilita esta interrupción hasta que uart_text agregue datos.
+ */
+ISR(USART_UDRE_vect)
+{
+    if (tx_tail==tx_head) UCSR0B&=(uint8_t)~_BV(UDRIE0);
+    else { UDR0=tx_ring[tx_tail]; ++tx_tail; }
+}
+/* now_ms — Obtiene una copia coherente del contador de milisegundos.
+ * Entrada: ninguna. Retorno: ticks como uint32_t. El bloque atómico evita que la ISR modifique parte del contador durante su lectura y restaura el estado previo de interrupciones.
+ */
+static uint32_t now_ms(void)
+{
+    uint32_t n; ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { n=ticks; } return n;
+}
+/* due — Comprueba si se alcanzó un instante programado.
+ * Entradas: n, tiempo actual; d, vencimiento, ambos en ms. Retorna 1 si n-d interpretado con signo es no negativo; 0 en otro caso. La comparación permite cruzar el desbordamiento para plazos separados por menos de 2^31 ms.
+ */
+static uint8_t due(uint32_t n,uint32_t d) { return (int32_t)(n-d)>=0; }
+/* uart_text — Encola una cadena para transmitirla mediante la ISR UART, sin esperar al puerto.
+ * Entrada: s, cadena terminada en cero. Sin retorno. Si no cabe completa en la cola circular de 256 posiciones, descarta el informe entero. Publica el nuevo índice y habilita la interrupción dentro de un bloque atómico.
+ */
+static void uart_text(const char *s)
+{
+    uint8_t h=tx_head,free_bytes=(uint8_t)(tx_tail-h-1);
+    uint16_t len=strlen(s);
+    if (len>free_bytes) return; /* Descartar informe entero, nunca bloquear. */
+    while (*s) { tx_ring[h]=*s++; ++h; }
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { tx_head=h; UCSR0B|=_BV(UDRIE0); }
+}
+
+/* ADC asincrono, tres canales con descarte tras cada cambio de multiplexor. */
+/* sensors — Avanza la adquisición ADC de LDR (canal 0), NTC (1) y potenciómetro (2).
+ * Entrada: n, tiempo actual en ms. Sin retorno. Inicia conversiones y consulta su finalización sin espera activa; descarta la primera conversión tras cambiar canal. Inicializa cada lectura y después aplica un filtro de 3/4 del valor previo y 1/4 del nuevo. Detecta fallo NTC con el valor crudo; al completar los tres canales habilita ready_sensors y programa la siguiente ronda.
+ */
+static void sensors(uint32_t n)
+{
+    static uint8_t channel,phase,discard=1,initialized[3];
+    /* ADC: solo inicia una ronda al vencer sensor_at; las llamadas siguientes consultan ADSC. */
+    if (!phase) {
+        if (!due(n,sensor_at)) return;
+        ADMUX=_BV(REFS0)|channel; ADCSRA|=_BV(ADSC); phase=1; return;
+    }
+    if (ADCSRA&_BV(ADSC)) return;
+    { uint16_t v=ADC;
+      /* Tras seleccionar canal se descarta una conversión para permitir el asentamiento del multiplexor. */
+      if (discard) { discard=0; ADCSRA|=_BV(ADSC); return; }
+      if (!initialized[channel]) { analog[channel]=v; initialized[channel]=1; }
+      else analog[channel]=(uint16_t)((3UL*analog[channel]+v+2)/4);
+      /* Averia NTC por lectura cruda: no esperar al filtro. */
+      if (channel==1) sensor_fault=(v<=3 || v>=1020);
+    }
+    discard=1; phase=0;
+    if (++channel==3) { channel=0; ready_sensors=1; sensor_at=n+SENSOR_PERIOD_MS; }
+}
+/* ntc_adc — Normaliza la lectura filtrada de la NTC según la orientación de su divisor.
+ * Entrada: ninguna; utiliza analog[1] y NTC_TO_GND. Retorno: ADC normalizado de 0 a 1023; con la configuración actual devuelve analog[1], y con la orientación inversa devuelve 1023-analog[1].
+ */
+static uint16_t ntc_adc(void) { return NTC_TO_GND ? analog[1] : 1023-analog[1]; }
+/* temperature — Estima la temperatura de la NTC en grados Celsius enteros.
+ * Entrada: ninguna; consulta ntc_adc. Retorno: int16_t calculado mediante tabla e interpolación lineal entre puntos, limitado a los extremos -20 y 100. No usa punto flotante; las alarmas se deciden por umbrales ADC en inputs.
+ */
+static int16_t temperature(void)
+{
+    /* Tabla ADC descendente y temperaturas correspondientes; la interpolación usa aritmética entera. */
+    static const uint16_t a[]={934,788,684,569,512,455,354,270,235,204,153,115,67};
+    static const int16_t t[]={-20,0,10,20,25,30,40,50,55,60,70,80,100};
+    uint16_t v=ntc_adc(); uint8_t i;
+    if(v>=a[0]) return t[0];
+    for(i=1;i<13;i++) if(v>=a[i])
+        return t[i-1]+(int32_t)(a[i-1]-v)*(t[i]-t[i-1])/(a[i-1]-a[i]);
+    return 100;
+}
+/* emergency_pressed — Lee el pulsador de emergencia conectado a PD3, activo a nivel bajo.
+ * Entrada: ninguna. Retorno: 1 con el pin a GND y 0 con nivel alto. Esta lectura directa no aplica antirrebote.
+ */
+static uint8_t emergency_pressed(void) { return !(PIND&_BV(PD3)); }
+/* stopped_reason — Selecciona el estado de parada que corresponde a las condiciones actuales.
+ * Entrada: ninguna; consulta alarmas enclavadas, emergencia física, condición térmica y enlace SPI. Retorno: S_EMERGENCY, S_THERMAL, S_JAM, S_LINK o S_STOP, en ese orden de prioridad. No borra alarmas.
+ */
+static uint8_t stopped_reason(void)
+{
+    /* Las alarmas conservan su prioridad hasta el rearme manual. */
+    if(estop_latched || emergency_pressed()) return S_EMERGENCY;
+    if(thermal_latched || thermal) return S_THERMAL;
+    if(jam_latched) return S_JAM;
+    if(!link_ok || need_sync) return S_LINK;
+    return S_STOP;
+}
+/* safety_latched — Indica si hay alguna alarma de seguridad enclavada.
+ * Entrada: ninguna. Retorno: 1 si emergencia, temperatura o atasco están enclavados; 0 si ninguno lo está. El fallo de enlace se evalúa por separado.
+ */
+static uint8_t safety_latched(void)
+{
+    return estop_latched || thermal_latched || jam_latched;
+}
+/* halt — Aplica una parada local y deja pendiente la orden de parada para el esclavo.
+ * Entrada: reason, estado que debe mostrarse. Sin retorno. Cancela solicitud START, pieza pendiente y vigilancia de atasco. Selecciona C_EMERG si existe una alarma de seguridad o el motivo es térmico, emergencia o atasco; en otro caso selecciona C_STOP.
+ */
+static void halt(uint8_t reason)
+{
+    state=reason; want_start=0; piece_pending=0; jam_watching=0;
+    urgent=(safety_latched() || reason==S_THERMAL ||
+            reason==S_EMERGENCY || reason==S_JAM ? C_EMERG:C_STOP);
+}
+/* inputs — Actualiza entradas, velocidad solicitada, detección de piezas y alarmas; evalúa el rearme manual.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Atiende emergencia primero; procesa NTC con histéresis, LDR con histéresis y antirrebote de 30 ms, y atasco tras la confirmación del retorno. START requiere un nuevo flanco estable y todas las condiciones de rearme; liberar un sensor por sí solo no borra el enclavamiento.
+ */
+static void inputs(uint32_t n)
+{
+    uint8_t b=!(PIND&_BV(PD2)),d;
+    if(emergency_pressed() && !estop_latched) {
+        estop_latched=1; halt(stopped_reason());
+    }
+    if(ready_sensors) {
+        /* NTC: fallo crudo o umbral de disparo activa alarma; el umbral de recuperación solo limpia thermal, no el enclavamiento. */
+        if(sensor_fault || ntc_adc()<=NTC_TRIP_ADC) {
+            if(!thermal) {
+                thermal=1; thermal_latched=1; halt(stopped_reason());
+            }
+        } else if(ntc_adc()>=NTC_SAFE_ADC) thermal=0;
+        /* Escala el potenciómetro filtrado de 0..1023 a PWM de 0..255, con redondeo. */
+        pwm_target=(uint8_t)((analog[2]*255UL+511)/1023);
+        /* LDR: los dos umbrales forman una histéresis; dentro de la banda se conserva el estado previo. */
+        d=ldr_raw;
+        if(LDR_DETECT_LOW) {
+            if(analog[0]<=LDR_LOW) d=1; else if(analog[0]>=LDR_HIGH) d=0;
+        } else {
+            if(analog[0]>=LDR_HIGH) d=1; else if(analog[0]<=LDR_LOW) d=0;
+        }
+        /* Antirrebote LDR: exige 30 ms sin cambios antes de actualizar piece. Otra pieza requiere una liberación estable previa. */
+        if(d!=ldr_raw) { ldr_raw=d; ldr_at=n; }
+        if(d!=ldr_stable && (uint32_t)(n-ldr_at)>=DEBOUNCE_MS) {
+            ldr_stable=d; piece=d;
+            if(!d) piece_armed=1;
+            else if(piece_armed) {
+                piece_armed=0;
+                if(state==S_RUN) piece_pending=1;
+            }
+        }
+        /* Solo se habilita al confirmar por STATUS que el piston termino.
+         * Una liberacion cancela, no pausa: no sumar intervalos separados. */
+        /* Atasco: cuenta 4000 ms consecutivos de pieza presente, únicamente mientras sigue S_RUN. Liberar la LDR cancela esta vigilancia. */
+        if(jam_watching) {
+            if(state!=S_RUN || !piece) jam_watching=0;
+            else if((uint32_t)(n-jam_since)>=JAM_TIMEOUT_MS) {
+                jam_latched=1; halt(stopped_reason());
+            }
+        }
+    }
+    if(safety_latched()) state=stopped_reason();
+    /* Evaluar START despues de actualizar TODAS las condiciones de alarma.
+     * Solo un nuevo flanco, nunca el boton mantenido, puede rearmar. */
+    /* Antirrebote START: mide estabilidad y actúa al pasar a pulsado; mantenerlo presionado no genera otro rearme. */
+    if(b!=btn_raw) { btn_raw=b; btn_at=n; }
+    if(b!=btn_stable && (uint32_t)(n-btn_at)>=DEBOUNCE_MS) {
+        btn_stable=b;
+        if(b && ready_sensors && state!=S_RUN && state!=S_PISTON &&
+           !want_start && !emergency_pressed() && !thermal &&
+           (!jam_latched || !piece) && link_ok && !need_sync) {
+            /* Solo este START aceptado borra las alarmas enclavadas y solicita un nuevo arranque con PWM previamente confirmado. */
+            estop_latched=0; thermal_latched=0; jam_latched=0;
+            jam_watching=0; state=S_STOP;
+            want_start=1; pwm_valid=0;
+        }
+    }
+}
+
+/* SPI: comando y consulta separados por SS. Cada paso retorna al main. */
+static struct {
+    uint8_t phase,cmd,val,attempt,result,rx0,rx1,query;
+    uint32_t at;
+} bus;
+/* spi_restore — Libera SS y reinicializa el periférico SPI maestro.
+ * Entrada: ninguna. Sin retorno. Deshabilita SPI, lee SPSR y SPDR para limpiar su estado y configura modo 1, reloj F_CPU/128 (125 kHz a 16 MHz), sin doble velocidad.
+ */
+static void spi_restore(void)
+{
+    PORTB|=_BV(PB2);
+    SPCR=0;
+    { volatile uint8_t d=SPSR; d=SPDR; (void)d; }
+    SPCR=_BV(SPE)|_BV(MSTR)|_BV(CPHA)|_BV(SPR1)|_BV(SPR0); SPSR=0;
+}
+/* spi_send — Prepara un intercambio SPI de comando y valor, ejecutado después por spi_task.
+ * Entradas: c, comando; v, valor; n, tiempo actual en ms. Sin retorno. Alterna el bit de secuencia 0x10, inicializa intento y resultado, activa SS y programa el comienzo del primer byte a n+1.
+ */
+static void spi_send(uint8_t c,uint8_t v,uint32_t n)
+{
+    sequence^=0x10; bus.cmd=c|sequence; bus.val=v;
+    bus.attempt=1; bus.result=0; bus.query=0;
+    PORTB&=(uint8_t)~_BV(PB2); bus.at=n+1; bus.phase=1;
+}
+/* spi_fail — Gestiona un timeout o una respuesta inválida de la transacción SPI.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Restaura SPI y programa un reintento tras 4 ms mientras queden intentos; al agotarlos deja el bus inactivo y bus.result=2.
+ */
