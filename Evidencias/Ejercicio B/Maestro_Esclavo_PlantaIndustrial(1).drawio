@@ -1,0 +1,296 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="banda-moore" name="Banda transportadora · Moore">
+    <mxGraphModel dx="3015" dy="1028" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2800" pageHeight="2830" background="#111111" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="heading" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=39;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#111111;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;fontStyle=1;" value="Banda transportadora ATmega328P" vertex="1">
+          <mxGeometry height="75" width="2740" x="30" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#111111;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="7 estados de control · Maestro / esclavo SPI · LDR y NTC · Alarmas enclavadas" vertex="1">
+          <mxGeometry height="55" width="2740" x="30" y="105" as="geometry" />
+        </mxCell>
+        <mxCell id="states-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="ESTADOS" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="states" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="E0 → PARADO (S_STOP = 0)&#xa;E1 → MARCHA (S_RUN = 1)&#xa;E2 → PISTÓN (S_PISTON = 2)&#xa;E3 → TÉRMICA (S_THERMAL = 3)&#xa;E4 → ENLACE (S_LINK = 4)&#xa;E5 → EMERGENCIA (S_EMERGENCY = 5)&#xa;E6 → ATASCO (S_JAM = 6)&#xa;&#xa;Cada círculo contiene el estado&#xa;y sus salidas de control.&#xa;Las flechas indican condiciones." vertex="1">
+          <mxGeometry height="385" width="540" x="30" y="258" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="ENTRADAS" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="670" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="START: PD2 a GND; flanco con&#xa;antirrebote de 30 ms.&#xa;EMERGENCIA: PD3 a GND.&#xa;&#xa;LDR: ADC0 filtrado.&#xa;Pieza: ADC ≤ 400; libre: ADC ≥ 500.&#xa;Antirrebote LDR: 30 ms.&#xa;Nueva pieza requiere liberación previa.&#xa;&#xa;NTC: ADC1 y fallo de sensor.&#xa;Paro: ADC normalizado ≤ 204.&#xa;Recuperación térmica: ADC ≥ 235&#xa;y sin fallo de sensor.&#xa;Fallo crudo: ADC ≤ 3 o ≥ 1020.&#xa;&#xa;POT: ADC2 → pwm_target (0…255).&#xa;&#xa;SPI: respuesta validada (ACK),&#xa;C_STATUS y disponibilidad de enlace.&#xa;Reloj: ticks de 1 ms." vertex="1">
+          <mxGeometry height="605" width="540" x="30" y="728" as="geometry" />
+        </mxCell>
+        <mxCell id="guards-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="CONDICIONES DE LAS FLECHAS" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="1360" as="geometry" />
+        </mxCell>
+        <mxCell id="guards" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="Garr: ACK de C_START válido;&#xa;!urgent, !thermal, sin enclavamientos&#xa;y emergencia física liberada.&#xa;Antes: START aceptado, PWM confirmado.&#xa;&#xa;Gpieza: pieza nueva estable detectada&#xa;en E1; piece_pending atendido;&#xa;ACK de C_PISTON válido;&#xa;!urgent, !thermal y sin enclavamientos.&#xa;&#xa;Gfin: ACK de C_STATUS en E2;&#xa;bit 1=0 (pistón libre), bit 0=1&#xa;(banda activa), bits 2 y 3=0.&#xa;&#xa;E: emergencia física o enclavada.&#xa;T: térmica activa o enclavada.&#xa;J: jam_latched=1.&#xa;L: !link_ok || need_sync.&#xa;&#xa;R: nuevo START aceptado&#xa;según el cuadro de rearme derecho.&#xa;&#xa;P0…P6: permanencia en el estado;&#xa;ninguna condición de cambio válida,&#xa;aplicando las prioridades globales." vertex="1">
+          <mxGeometry height="775" width="540" x="30" y="1418" as="geometry" />
+        </mxCell>
+        <mxCell id="timers-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="TIEMPOS Y VIGILANCIA LDR" vertex="1">
+          <mxGeometry height="58" width="540" x="30" y="2220" as="geometry" />
+        </mxCell>
+        <mxCell id="timers" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="El plazo de atasco NO empieza&#xa;al detectar inicialmente la pieza.&#xa;&#xa;Al confirmar Gfin:&#xa;count++; jam_since=n;&#xa;jam_watching=piece.&#xa;&#xa;Si E1 y piece=1 continuamente&#xa;durante 4000 ms de vigilancia:&#xa;jam_latched=1 → prioridad J.&#xa;&#xa;Si !piece o state≠S_RUN:&#xa;jam_watching=0.&#xa;No se suman intervalos separados.&#xa;Liberar LDR no borra jam_latched." vertex="1">
+          <mxGeometry height="465" width="540" x="30" y="2278" as="geometry" />
+        </mxCell>
+        <mxCell id="global-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="TRANSICIONES GLOBALES · PRIORIDAD" vertex="1">
+          <mxGeometry height="58" width="740" x="2030" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="global" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="Orden: E &gt; T &gt; J &gt; L &gt; E0.&#xa;El selector es stopped_reason().&#xa;&#xa;E: desde cualquier estado → E5.&#xa;T ∧ !E: desde cualquier estado → E3.&#xa;J ∧ !E ∧ !T: desde cualquier estado → E6.&#xa;L ∧ !E ∧ !T ∧ !J: → E4 al evaluar una parada&#xa;o una anomalía de enlace/STATUS.&#xa;&#xa;Mientras haya seguridad enclavada, inputs()&#xa;recalcula la causa de mayor prioridad.&#xa;Las condiciones físicas pueden desaparecer;&#xa;el enclavamiento conserva la alarma.&#xa;&#xa;Las flechas E/T/J/L dibujadas son ejemplos.&#xa;Estas reglas completan todos los orígenes&#xa;y evitan dibujar cruces entre cada par.&#xa;&#xa;Fallo SPI final: limpia want_start, piece_pending&#xa;y jam_watching; need_sync=1; selecciona causa.&#xa;STATUS incoherente: llama halt(causa)." vertex="1">
+          <mxGeometry height="615" width="740" x="2030" y="258" as="geometry" />
+        </mxCell>
+        <mxCell id="rearm-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="REARME Y ARRANQUE" vertex="1">
+          <mxGeometry height="58" width="740" x="2030" y="900" as="geometry" />
+        </mxCell>
+        <mxCell id="rearm" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="R: desde E3/E4/E5/E6 → E0, también aceptable&#xa;en E0. Requiere un nuevo flanco START estable.&#xa;&#xa;ready_sensors=1; estado distinto de E1/E2;&#xa;!want_start; emergencia física liberada;&#xa;!thermal; (!jam_latched || !piece);&#xa;link_ok=1 y need_sync=0.&#xa;&#xa;Acciones al aceptar START:&#xa;estop_latched=thermal_latched=jam_latched=0;&#xa;jam_watching=0; state=S_STOP;&#xa;want_start=1; pwm_valid=0.&#xa;&#xa;Después se envía y confirma C_PWM;&#xa;luego C_START. Solo su ACK habilita E1.&#xa;START mantenido no rearma.&#xa;START en E1 o E2 no actúa.&#xa;&#xa;Soltar emergencia, enfriar o liberar LDR&#xa;no produce por sí solo el arranque.&#xa;ACK de SYNC tampoco cambia state a E0.&#xa;Desde E4 todavía se necesita START válido." vertex="1">
+          <mxGeometry height="610" width="740" x="2030" y="958" as="geometry" />
+        </mxCell>
+        <mxCell id="actions-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="ACCIONES AUXILIARES Y ESCLAVO" vertex="1">
+          <mxGeometry height="58" width="740" x="2030" y="1600" as="geometry" />
+        </mxCell>
+        <mxCell id="actions" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="halt(reason): state=reason; want_start=0;&#xa;piece_pending=0; jam_watching=0.&#xa;Seguridad → orden urgente C_EMERG.&#xa;Enlace sin seguridad → C_STOP.&#xa;&#xa;Gfin: incrementa el contador e inicia vigilancia&#xa;solo si la pieza permanece presente.&#xa;Estas acciones actualizan el estado extendido;&#xa;no son salidas combinacionales de las flechas.&#xa;&#xa;El maestro solicita el ciclo mediante SPI.&#xa;El esclavo detiene la banda, mueve el pistón&#xa;y reanuda la banda localmente al terminar.&#xa;El maestro observa el fin mediante STATUS.&#xa;&#xa;En E4, «parada solicitada» no garantiza&#xa;la detención física con el enlace caído.&#xa;Se representan las órdenes del maestro.&#xa;&#xa;C_STATUS: cadencia propia de 80 ms.&#xa;Tres intentos máximos por intercambio.&#xa;SYNC: 200 ms tras fallo SPI final;&#xa;100 ms tras STATUS incoherente." vertex="1">
+          <mxGeometry height="660" width="740" x="2030" y="1658" as="geometry" />
+        </mxCell>
+        <mxCell id="model-title" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=25;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;align=center;fontStyle=1;spacing=5;" value="LECTURA DEL MODELO DE MOORE" vertex="1">
+          <mxGeometry height="58" width="740" x="2030" y="2350" as="geometry" />
+        </mxCell>
+        <mxCell id="model" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;rounded=1;arcSize=8;align=left;strokeWidth=1;" value="Las salidas se asocian a cada círculo:&#xa;habilitar banda, solicitar ciclo o inhibir arranque.&#xa;&#xa;Es un modelo de Moore extendido: datos,&#xa;contadores, temporizadores, banderas y fases&#xa;SPI completan la memoria del sistema.&#xa;La magnitud PWM se mantiene como dato;&#xa;no se inventa un estado por cada velocidad.&#xa;&#xa;Se omiten los mensajes LCD del diagrama,&#xa;incluido el asociado a detección de objeto." vertex="1">
+          <mxGeometry height="385" width="740" x="2030" y="2408" as="geometry" />
+        </mxCell>
+        <mxCell id="init" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=18;fontColor=#FFFFFF;fillColor=#FFFFFF;strokeColor=#FFFFFF;strokeWidth=2;spacing=14;ellipse;fillColor=#0F172A;strokeColor=#0F172A;" value="" vertex="1">
+          <mxGeometry height="20" width="20" x="665" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="E0" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;shape=ellipse;perimeter=ellipsePerimeter;" value="E0 · PARADO&#xa;S_STOP&#xa;────────────&#xa;Banda detenida&#xa;Espera de arranque&#xa;Pistón en reposo" vertex="1">
+          <mxGeometry height="320" width="320" x="820" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="E1" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;shape=ellipse;perimeter=ellipsePerimeter;" value="E1 · MARCHA&#xa;S_RUN&#xa;────────────&#xa;Banda habilitada&#xa;Pistón en reposo&#xa;PWM: dato retenido" vertex="1">
+          <mxGeometry height="320" width="320" x="1430" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="E2" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;shape=ellipse;perimeter=ellipsePerimeter;" value="E2 · PISTÓN&#xa;S_PISTON&#xa;────────────&#xa;Banda detenida&#xa;Ciclo del pistón&#xa;en el esclavo" vertex="1">
+          <mxGeometry height="320" width="320" x="1430" y="1030" as="geometry" />
+        </mxCell>
+        <mxCell id="E3" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;shape=ellipse;perimeter=ellipsePerimeter;" value="E3 · TÉRMICA&#xa;S_THERMAL&#xa;────────────&#xa;Parada de seguridad&#xa;Ciclo abortado&#xa;Arranque inhibido" vertex="1">
+          <mxGeometry height="320" width="320" x="820" y="1030" as="geometry" />
+        </mxCell>
+        <mxCell id="E4" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;shape=ellipse;perimeter=ellipsePerimeter;" value="E4 · ENLACE&#xa;S_LINK&#xa;────────────&#xa;Parada solicitada&#xa;Arranque inhibido&#xa;Recuperación SYNC" vertex="1">
+          <mxGeometry height="320" width="320" x="1430" y="1730" as="geometry" />
+        </mxCell>
+        <mxCell id="E5" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;shape=ellipse;perimeter=ellipsePerimeter;" value="E5 · EMERGENCIA&#xa;S_EMERGENCY&#xa;────────────&#xa;Parada de seguridad&#xa;Ciclo abortado&#xa;Arranque inhibido" vertex="1">
+          <mxGeometry height="320" width="320" x="820" y="1730" as="geometry" />
+        </mxCell>
+        <mxCell id="E6" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#DDDDDD;strokeWidth=2;spacing=14;shape=ellipse;perimeter=ellipsePerimeter;" value="E6 · ATASCO&#xa;S_JAM&#xa;────────────&#xa;Parada de seguridad&#xa;Ciclo abortado&#xa;Arranque inhibido" vertex="1">
+          <mxGeometry height="320" width="320" x="1125" y="2330" as="geometry" />
+        </mxCell>
+        <mxCell id="inicio" edge="1" parent="1" source="init" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=1;exitY=0.5;exitPerimeter=0;entryX=0;entryY=0.5;entryPerimeter=0;" target="E0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="inicio-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="Inicio" vertex="1">
+          <mxGeometry height="40" width="100" x="705" y="440" as="geometry" />
+        </mxCell>
+        <mxCell id="arranque" edge="1" parent="1" source="E0" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=1;exitY=0.5;exitPerimeter=0;entryX=0;entryY=0.5;entryPerimeter=0;" target="E1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arranque-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="Garr" vertex="1">
+          <mxGeometry height="50" width="150" x="1230" y="435" as="geometry" />
+        </mxCell>
+        <mxCell id="pieza" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.5;exitY=1;exitPerimeter=0;entryX=0.5;entryY=0;entryPerimeter=0;" target="E2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pieza-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="Gpieza" vertex="1">
+          <mxGeometry height="55" width="220" x="1620" y="790" as="geometry" />
+        </mxCell>
+        <mxCell id="fin" edge="1" parent="1" source="E2" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0;exitY=0.5;exitPerimeter=0;entryX=0.1875;entryY=0.90625;entryPerimeter=0;" target="E1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1260" y="1190" />
+              <mxPoint x="1260" y="720" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fin-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="Gfin" vertex="1">
+          <mxGeometry height="55" width="100" x="1155" y="850" as="geometry" />
+        </mxCell>
+        <mxCell id="termica" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.109375;exitY=0.8125;exitPerimeter=0;entryX=0.84375;entryY=0.15625;entryPerimeter=0;dashed=1;" target="E3">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1180" y="860" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="termica-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="T ∧ !E" vertex="1">
+          <mxGeometry height="55" width="230" x="925" y="840" as="geometry" />
+        </mxCell>
+        <mxCell id="emergencia" edge="1" parent="1" source="E3" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.5;exitY=1;exitPerimeter=0;entryX=0.5;entryY=0;entryPerimeter=0;dashed=1;" target="E5">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="enlace" edge="1" parent="1" source="E2" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.5;exitY=1;exitPerimeter=0;entryX=0.5;entryY=0;entryPerimeter=0;dashed=1;" target="E4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="enlace-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="L ∧ !E ∧ !T ∧ !J" vertex="1">
+          <mxGeometry height="55" width="340" x="1620" y="1500" as="geometry" />
+        </mxCell>
+        <mxCell id="atasco" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=1;exitY=0.5;exitPerimeter=0;entryX=1;entryY=0.5;entryPerimeter=0;dashed=1;" target="E6">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1940" y="850" />
+              <mxPoint x="1940" y="2490" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="atasco-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="J ∧ !E ∧ !T" vertex="1">
+          <mxGeometry height="55" width="300" x="1610" y="2240" as="geometry" />
+        </mxCell>
+        <mxCell id="rearme" edge="1" parent="1" source="E5" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.406;exitY=1;exitPerimeter=0;dashed=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="E0">
+          <mxGeometry relative="1" x="0.0126" as="geometry">
+            <Array as="points">
+              <mxPoint x="610" y="2470" />
+              <mxPoint x="610" y="180" />
+              <mxPoint x="940" y="180" />
+            </Array>
+            <mxPoint x="969.9200000000001" y="2150" as="sourcePoint" />
+            <mxPoint x="930" y="320" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rearme-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="R" vertex="1">
+          <mxGeometry height="55" width="100" x="685" y="2100" as="geometry" />
+        </mxCell>
+        <mxCell id="P0" edge="1" parent="1" source="E0" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.14375;exitY=0.146875;exitPerimeter=0;entryX=0.14375;entryY=0.853125;entryPerimeter=0;" target="E0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="760" y="330" />
+              <mxPoint x="760" y="650" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="P0-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="P0" vertex="1">
+          <mxGeometry height="50" width="70" x="700" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="P1" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.146875;exitY=0.146875;exitPerimeter=0;entryX=0.853125;entryY=0.146875;entryPerimeter=0;" target="E1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1460" y="250" />
+              <mxPoint x="1740" y="250" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="P1-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="P1" vertex="1">
+          <mxGeometry height="45" width="80" x="1570" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="P2" edge="1" parent="1" source="E2" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.853125;exitY=0.146875;exitPerimeter=0;entryX=0.853125;entryY=0.853125;entryPerimeter=0;" target="E2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1830" y="1020" />
+              <mxPoint x="1830" y="1360" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="P2-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="P2" vertex="1">
+          <mxGeometry height="50" width="70" x="1840" y="1160" as="geometry" />
+        </mxCell>
+        <mxCell id="P3" edge="1" parent="1" source="E3" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.14375;exitY=0.146875;exitPerimeter=0;entryX=0.14375;entryY=0.853125;entryPerimeter=0;" target="E3">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="760" y="1030" />
+              <mxPoint x="760" y="1350" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="P3-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="P3" vertex="1">
+          <mxGeometry height="50" width="70" x="685" y="1170" as="geometry" />
+        </mxCell>
+        <mxCell id="P4" edge="1" parent="1" source="E4" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.853125;exitY=0.146875;exitPerimeter=0;entryX=0.853125;entryY=0.853125;entryPerimeter=0;" target="E4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1830" y="1720" />
+              <mxPoint x="1830" y="2060" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="P4-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="P4" vertex="1">
+          <mxGeometry height="50" width="70" x="1840" y="1860" as="geometry" />
+        </mxCell>
+        <mxCell id="P5" edge="1" parent="1" source="E5" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.14375;exitY=0.146875;exitPerimeter=0;entryX=0.14375;entryY=0.853125;entryPerimeter=0;" target="E5">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="760" y="1730" />
+              <mxPoint x="760" y="2050" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="P5-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="P5" vertex="1">
+          <mxGeometry height="50" width="70" x="685" y="1870" as="geometry" />
+        </mxCell>
+        <mxCell id="P6" edge="1" parent="1" source="E6" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.359375;exitY=0.96875;exitPerimeter=0;entryX=0.640625;entryY=0.96875;entryPerimeter=0;" target="E6">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1200" y="2690" />
+              <mxPoint x="1370" y="2690" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="P6-label" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="P6" vertex="1">
+          <mxGeometry height="45" width="80" x="1430" y="2650" as="geometry" />
+        </mxCell>
+        <mxCell id="concept" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=23;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#111111;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="MOORE: las salidas están dentro de los estados.&#xa;Las flechas contienen condiciones; no mensajes ni salidas.&#xa;Flechas discontinuas: ejemplos de reglas globales y rearme." vertex="1">
+          <mxGeometry height="125" width="1130" x="580" y="2580" as="geometry" />
+        </mxCell>
+        <mxCell id="foot" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontColor=#FFFFFF;fillColor=#111111;strokeColor=#111111;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="El estado extendido incluye los enclavamientos, la vigilancia LDR y el protocolo SPI." vertex="1">
+          <mxGeometry height="85" width="1320" x="670" y="2730" as="geometry" />
+        </mxCell>
+        <mxCell id="gji2nSqMW6ppaFg991il-1" edge="1" parent="1" source="E1" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;entryX=1;entryY=0;dashed=1;entryDx=0;entryDy=0;" target="E5">
+          <mxGeometry relative="1" x="-0.3995" y="19.36" as="geometry">
+            <Array as="points">
+              <mxPoint x="1257.5" y="1070" />
+            </Array>
+            <mxPoint x="1560" y="720" as="sourcePoint" />
+            <mxPoint x="1167.5" y="1290" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="gji2nSqMW6ppaFg991il-2" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="E5" vertex="1">
+          <mxGeometry height="55" width="130" x="1220" y="1360" as="geometry" />
+        </mxCell>
+        <mxCell id="gji2nSqMW6ppaFg991il-3" edge="1" parent="1" source="E4" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0;exitY=0.5;entryX=0.5;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" target="E1">
+          <mxGeometry relative="1" x="-0.2389" y="-0.09" as="geometry">
+            <Array as="points">
+              <mxPoint x="1190" y="1887" />
+              <mxPoint x="1380" y="1540" />
+              <mxPoint x="1330" y="1390" />
+              <mxPoint x="1360" y="1100" />
+              <mxPoint x="1510" y="880" />
+            </Array>
+            <mxPoint x="1430" y="1917" as="sourcePoint" />
+            <mxPoint x="1590" y="676.9999999999995" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="gji2nSqMW6ppaFg991il-4" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="E5" vertex="1">
+          <mxGeometry height="55" width="130" x="995" y="1460" as="geometry" />
+        </mxCell>
+        <mxCell id="gji2nSqMW6ppaFg991il-6" parent="1" style="whiteSpace=wrap;html=0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fillColor=#F8FAFC;strokeColor=#F8FAFC;strokeWidth=2;spacing=14;strokeColor=none;fillColor=none;align=left;spacing=0;" value="E1" vertex="1">
+          <mxGeometry height="55" width="130" x="1290" y="1710" as="geometry" />
+        </mxCell>
+        <mxCell id="mlTVYaRV2NpqxNbWg8u6-1" edge="1" parent="1" source="E6" style="edgeStyle=none;rounded=1;curved=1;html=0;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#EEEEEE;exitX=0.368;exitY=0.006;exitPerimeter=0;entryX=0.906;entryY=0.812;entryPerimeter=0;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" target="E5">
+          <mxGeometry relative="1" x="0.1653" as="geometry">
+            <Array as="points">
+              <mxPoint x="1130" y="2318" />
+              <mxPoint x="1020" y="2280" />
+              <mxPoint x="1130" y="1998" />
+            </Array>
+            <mxPoint x="1236" y="2271" as="sourcePoint" />
+            <mxPoint x="1236" y="2045" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

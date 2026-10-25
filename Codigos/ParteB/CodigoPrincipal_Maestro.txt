@@ -242,3 +242,343 @@ static void spi_send(uint8_t c,uint8_t v,uint32_t n)
 /* spi_fail — Gestiona un timeout o una respuesta inválida de la transacción SPI.
  * Entrada: n, tiempo actual en ms. Sin retorno. Restaura SPI y programa un reintento tras 4 ms mientras queden intentos; al agotarlos deja el bus inactivo y bus.result=2.
  */
+ static void spi_fail(uint32_t n)
+{
+    spi_restore();
+    if(bus.attempt++<SPI_MAX_ATTEMPTS) { bus.phase=5; bus.at=n+4; }
+    else { bus.phase=0; bus.result=2; }
+}
+/* spi_task — Avanza la máquina de fases que envía dos bytes y consulta después su confirmación SPI.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Cada llamada procesa un paso y vuelve al main. Separa comando y consulta mediante SS, respeta pausas y timeout por byte, y verifica el ACK con el comando y su secuencia. Para STATUS exige que el nibble alto de estado sea cero; para otros comandos compara el valor devuelto. Resultado: bus.result=1 al confirmar o 2 al agotar reintentos.
+ */
+static void spi_task(uint32_t n)
+{
+    uint8_t r;
+    /* Fases SPI: 0 reposo; 1 primer byte; 2 espera; 7 pausa entre bytes; 3 espera segundo byte; 6 cierre; 4 espera ACK; 5 reintento. */
+    switch(bus.phase) {
+    case 0: break;
+    case 1:
+        if(!due(n,bus.at)) break;
+        SPDR=bus.query ? 0:bus.cmd; bus.at=n+SPI_BYTE_TIMEOUT_MS; bus.phase=2; break;
+    case 2:
+        if(!(SPSR&_BV(SPIF))) { if(due(n,bus.at)) spi_fail(n); break; }
+        r=SPDR; if(bus.query) bus.rx0=r;
+        /* Dar tiempo a SPI_STC del esclavo para precargar su segundo byte. */
+        bus.at=n+1; bus.phase=7; break;
+    case 7:
+        if(!due(n,bus.at)) break;
+        SPDR=bus.query ? 0:bus.val; bus.at=n+SPI_BYTE_TIMEOUT_MS; bus.phase=3; break;
+    case 3:
+        if(!(SPSR&_BV(SPIF))) { if(due(n,bus.at)) spi_fail(n); break; }
+        r=SPDR; if(bus.query) bus.rx1=r;
+        /* Conservar SS 1 ms mas permite atender SPI_STC en el esclavo
+         * antes de la interrupcion de fin de seleccion. */
+        bus.phase=6; bus.at=n+1; break;
+    case 6:
+        if(!due(n,bus.at)) break;
+        PORTB|=_BV(PB2);
+        if(!bus.query) { bus.phase=4; bus.at=n+SPI_REPLY_WAIT_MS; }
+        else {
+            debug_cmd=bus.cmd; debug_rx0=bus.rx0; debug_rx1=bus.rx1;
+            /* Valida el ACK del intercambio actual, incluido el bit de secuencia; una respuesta inválida provoca reintento. */
+            if(bus.rx0==(uint8_t)(0x80|bus.cmd) &&
+               (((bus.cmd&15)==C_STATUS) ? !(bus.rx1&0xF0) : bus.rx1==bus.val)) {
+                bus.phase=0; bus.result=1;
+            } else spi_fail(n);
+        } break;
+    case 4:
+        if(due(n,bus.at)) {
+            bus.query=1; PORTB&=(uint8_t)~_BV(PB2); bus.phase=1; bus.at=n+1;
+        } break;
+    case 5:
+        if(due(n,bus.at)) {
+            bus.query=0; PORTB&=(uint8_t)~_BV(PB2); bus.phase=1; bus.at=n+1;
+        } break;
+    }
+}
+/* command_name — Traduce un código de comando a su nombre para los informes.
+ * Entrada: c, código base del comando. Retorno: puntero a una cadena constante; devuelve ESTADO para cualquier código no enumerado en el switch.
+ */
+static const char *command_name(uint8_t c)
+{
+    switch(c) {
+    case C_SYNC:return "SYNC"; case C_START:return "START";
+    case C_STOP:return "STOP"; case C_EMERG:return "EMERG";
+    case C_PWM:return "PWM"; case C_PISTON:return "PISTON";
+    default:return "ESTADO";
+    }
+}
+/* control — Coordina los estados del proceso y decide la próxima orden hacia el esclavo.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Consume el resultado SPI, confirma arranque y pistón, cuenta al finalizar el ciclo y habilita la vigilancia de atasco. Prioriza órdenes urgentes, sincronización, arranque, pieza pendiente, consulta periódica y actualización PWM; el fallo de enlace exige sincronización y una nueva solicitud START.
+ */
+static void control(uint32_t n)
+{
+    if(bus.result) {
+        uint8_t c=bus.cmd&15;
+        /* Fallo SPI definitivo: cancela arranque/pieza, conserva prioridad de alarmas y programa recuperación por SYNC. */
+        if(bus.result==2) {
+            link_ok=0; need_sync=1; want_start=0; piece_pending=0;
+            jam_watching=0; state=stopped_reason(); recover_at=n+200;
+            last_command="ERROR SPI";
+        } else {
+            link_ok=1;
+            /* Consultar estado con cadencia propia aunque el potenciometro
+             * cambie continuamente; asi siempre se observa fin de piston. */
+            if(c==C_STATUS || c==C_SYNC) heartbeat_at=n+SPI_HEARTBEAT_MS;
+            if(c!=C_STATUS) last_command=command_name(c);
+            if(c==C_SYNC) {
+                need_sync=0; pwm_valid=0;
+                if(thermal || safety_latched()) urgent=C_EMERG;
+            }
+            if(c==C_PWM) { pwm_sent=bus.val; pwm_valid=1; }
+            if(c==C_START) {
+                want_start=0;
+                if(!urgent && !thermal && !safety_latched() &&
+                   !emergency_pressed()) state=S_RUN;
+            }
+            if(c==C_PISTON && !urgent && !thermal && !safety_latched()) {
+                state=S_PISTON; jam_watching=0;
+            }
+            /* STATUS: bits 2/3 indican anomalía; bit 1 indica pistón ocupado y bit 0 marcha. Se cuenta al confirmar retorno y marcha. */
+            if(c==C_STATUS) {
+                if((bus.rx1&12) && (state==S_RUN || state==S_PISTON)) {
+                    link_ok=0; need_sync=1; halt(stopped_reason()); recover_at=n+100;
+                } else if(state==S_PISTON && !(bus.rx1&2) && (bus.rx1&1)) {
+                    ++count; state=S_RUN;
+                    /* La banda ya se reanudo localmente en el esclavo.
+                     * El plazo empieza al recibir esta confirmacion. */
+                    jam_watching=piece; jam_since=n;
+                } else if(state==S_RUN && !(bus.rx1&1)) {
+                    need_sync=1; halt(stopped_reason()); recover_at=n+100;
+                }
+            }
+        }
+        bus.result=0;
+    }
+    /* Una orden de seguridad puede cancelar un intercambio previo. */
+    if(urgent && bus.phase && (bus.cmd&15)!=urgent) {
+        spi_restore(); bus.phase=0; bus.result=0;
+    }
+    /* Solo se inicia otra orden cuando el intercambio está libre; la siguiente selección conserva la prioridad original. */
+    if(bus.phase) return;
+    if(urgent) { uint8_t c=urgent; urgent=0; spi_send(c,0,n); return; }
+    if(need_sync) {
+        if(due(n,recover_at)) spi_send(C_SYNC,0,n);
+        return;
+    }
+    if(!ready_sensors) return;
+    if(want_start && !thermal && !safety_latched() && !emergency_pressed()) {
+        /* Enviar velocidad antes de START, evitando arranque con PWM viejo. */
+        if(!pwm_valid) spi_send(C_PWM,pwm_target,n);
+        else spi_send(C_START,0,n);
+    } else if(piece_pending && state==S_RUN) {
+        piece_pending=0; spi_send(C_PISTON,0,n);
+    } else if(due(n,heartbeat_at)) spi_send(C_STATUS,0,n);
+    else if(!pwm_valid || pwm_sent!=pwm_target) spi_send(C_PWM,pwm_target,n);
+}
+
+/* TWI de un byte al PCF: timeout, STOP y recuperacion con nueve pulsos SCL.
+ * La recuperacion es temporizada por main y no frena control ni UART/SPI.
+ */
+static struct { uint8_t phase,value,ok,pulses; uint32_t at; } twi;
+/* twi_start — Inicia el envío I2C de un byte al expansor PCF8574 de la LCD.
+ * Entradas: v, byte de salida del expansor; n, tiempo actual en ms. Sin retorno. Guarda el byte, borra el indicador de éxito, solicita START y fija un timeout inicial de 4 ms; twi_task completa el envío.
+ */
+static void twi_start(uint8_t v,uint32_t n)
+{
+    twi.value=v; twi.ok=0; twi.phase=1; twi.at=n+4;
+    TWCR=_BV(TWINT)|_BV(TWSTA)|_BV(TWEN);
+}
+/* twi_abort — Abandona una transferencia TWI e inicia la recuperación del bus I2C.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Deshabilita TWI, deja SDA y SCL como entradas sin pull-up interno y programa la primera fase de recuperación para n+1. Los niveles altos dependen de los pull-ups externos.
+ */
+static void twi_abort(uint32_t n)
+{
+    TWCR=0; PORTC&=(uint8_t)~(_BV(PC4)|_BV(PC5));
+    DDRC&=(uint8_t)~(_BV(PC4)|_BV(PC5));
+    twi.pulses=0; twi.phase=5; twi.at=n+1;
+}
+/* twi_task — Avanza el envío TWI o la recuperación temporizada del bus I2C.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Comprueba códigos de START, ACK de dirección y ACK de dato; solicita STOP y espera su finalización. Ante error o timeout llama a twi_abort. En recuperación alterna SCL entre salida baja y entrada durante nueve pulsos, libera SDA/SCL y reactiva TWI con twi.ok=0; solo una transferencia completada deja twi.ok=1.
+ */
+static void twi_task(uint32_t n)
+{
+    uint8_t s=TWSR&0xF8;
+    if(!twi.phase) return;
+    /* Recuperación I2C cooperativa: un paso por vencimiento; SCL bajo por salida, alto al liberar el pin con pull-up externo. */
+    if(twi.phase>=5) {
+        if(!due(n,twi.at)) return;
+        twi.at=n+1;
+        if(twi.phase==5) {
+            DDRC|=_BV(PC5); twi.phase=6;
+        } else if(twi.phase==6) {
+            DDRC&=(uint8_t)~_BV(PC5);
+            if(++twi.pulses<9) twi.phase=5;
+            else { DDRC|=_BV(PC4); twi.phase=7; }
+        } else {
+            DDRC&=(uint8_t)~(_BV(PC4)|_BV(PC5));
+            TWCR=_BV(TWEN); twi.phase=0; twi.ok=0;
+        }
+        return;
+    }
+    /* El envío solo se considera exitoso cuando el hardware termina STOP; un timeout inicia recuperación. */
+    if(twi.phase==4) {
+        if(!(TWCR&_BV(TWSTO))) { twi.phase=0; twi.ok=1; }
+        else if(due(n,twi.at)) twi_abort(n);
+        return;
+    }
+    if(!(TWCR&_BV(TWINT))) { if(due(n,twi.at)) twi_abort(n); return; }
+    /* Secuencia normal: START aceptado, dirección PCF8574 en escritura, dato reconocido y STOP. */
+    if(twi.phase==1 && (s==0x08 || s==0x10)) {
+        TWDR=LCD_ADDR_7BIT<<1; TWCR=_BV(TWINT)|_BV(TWEN); twi.phase=2;
+    } else if(twi.phase==2 && s==0x18) {
+        TWDR=twi.value; TWCR=_BV(TWINT)|_BV(TWEN); twi.phase=3;
+    } else if(twi.phase==3 && s==0x28) {
+        TWCR=_BV(TWINT)|_BV(TWEN)|_BV(TWSTO); twi.phase=4;
+    } else { twi_abort(n); return; }
+    twi.at=n+4;
+}
+
+static char display[2][17];
+static struct {
+    uint8_t init,active,idx,len,packet[6],position,data_next;
+    uint32_t at;
+} lcd;
+/* lcd_packet — Construye los bytes de PCF8574 necesarios para enviar un comando o carácter a la LCD.
+ * Entradas: b, byte LCD; rs, selección de registro (0 comando, 1 dato); nibble, distinto de cero para enviar solo el nibble alto. Sin retorno. Incluye luz de fondo y pulsos de E; prepara tres bytes por nibble y activa el paquete para lcd_task.
+ */
+static void lcd_packet(uint8_t b,uint8_t rs,uint8_t nibble)
+{
+    uint8_t bl=LCD_BACKLIGHT_HIGH ? 8:0;
+    uint8_t hi=(b&0xF0)|bl|rs,lo=(b<<4)|bl|rs;
+    /* Cada nibble se presenta con E bajo, E alto y E bajo; RW permanece bajo en estos bytes. */
+    lcd.packet[0]=hi; lcd.packet[1]=hi|4; lcd.packet[2]=hi;
+    lcd.packet[3]=lo; lcd.packet[4]=lo|4; lcd.packet[5]=lo;
+    lcd.len=nibble ? 3:6; lcd.idx=0; lcd.active=1;
+}
+/* lcd_task — Inicializa y refresca por pasos la LCD HD44780 de 16 columnas y dos filas.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Espera al TWI sin bloquear, transmite los paquetes, aplica los tiempos programados y recorre los 32 caracteres de display alternando dirección y dato. Si falla un envío, reinicia la secuencia LCD tras 1000 ms.
+ */
+static void lcd_task(uint32_t n)
+{
+    static const uint8_t init_cmd[]={0x30,0x30,0x30,0x20,0x28,0x08,0x01,0x06,0x0C};
+    if(twi.phase) return;
+    if(lcd.active) {
+        /* Un error TWI invalida la inicialización y el refresco LCD; se espera antes de intentar la secuencia completa. */
+        if(lcd.idx && !twi.ok) {
+            lcd.active=0; lcd.init=0; lcd.position=0; lcd.data_next=0;
+            lcd.at=n+1000; return;
+        }
+        if(lcd.idx<lcd.len) { twi_start(lcd.packet[lcd.idx++],n); return; }
+        lcd.active=0; lcd.at=n+(lcd.init==1 ? 5:2); return;
+    }
+    if(!due(n,lcd.at)) return;
+    /* Arranque HD44780: primeros cuatro envíos de un nibble; los siguientes comandos usan los dos nibbles. */
+    if(lcd.init<sizeof(init_cmd)) {
+        uint8_t i=lcd.init++; lcd_packet(init_cmd[i],0,i<4); return;
+    }
+    /* Refresco: posiciones 0..15 en primera fila y 16..31 desde DDRAM 0x40 en segunda fila; alterna dirección y carácter. */
+    if(!lcd.data_next) {
+        lcd_packet(0x80|(lcd.position<16 ? lcd.position:0x40+lcd.position-16),0,0);
+        lcd.data_next=1;
+    } else {
+        lcd_packet(display[lcd.position/16][lcd.position%16],1,0);
+        lcd.position=(lcd.position+1)%32; lcd.data_next=0;
+    }
+}
+/* state_name — Obtiene el texto de presentación del estado actual.
+ * Entrada: ninguna; consulta state, emergencia física, sensor_fault, thermal y piece. Retorno: puntero a una cadena constante. En estados de alarma distingue la condición activa de la indicación de rearme, manteniendo exactamente los textos originales.
+ */
+static const char *state_name(void)
+{
+    switch(state) {
+    case S_RUN:return "MARCHA"; case S_PISTON:return "PISTON";
+    case S_EMERGENCY:return (PIND&_BV(PD3)) ? "EMERG: DAR START":"EMERG BOTON";
+    case S_THERMAL:return sensor_fault ? "FALLO SENSOR NTC":
+                                 (thermal ? "EMERG TEMP":"TEMP OK START");
+    case S_JAM:return piece ? "ATASCO PIEZA":"LDR OK DAR START";
+    case S_LINK:return "FALLO SPI"; default:return "PARADO";
+    }
+}
+/* line — Carga una fila del búfer de pantalla con ancho fijo de 16 caracteres.
+ * Entradas: row, fila usada por el programa (0 o 1); s, cadena terminada en cero. Sin retorno. Copia hasta 16 caracteres, rellena con espacios y agrega el terminador cero en la posición 16. No comprueba el rango de row.
+ */
+static void line(uint8_t row,const char *s)
+{
+    uint8_t i=0;
+    while(i<16 && s[i]) { display[row][i]=s[i]; ++i; }
+    while(i<16) display[row][i++]=' ';
+    display[row][16]=0;
+}
+/* report — Actualiza las filas de la LCD y genera telemetría UART cada 500 ms.
+ * Entrada: n, tiempo actual en ms. Sin retorno. Informa diagnóstico SPI y luego estado, alarmas o páginas normales alternadas cada 2 s. La LCD limita el contador a módulo 100000 para su presentación; el informe UART incluye el contador completo, sensores, PWM y último comando confirmado. uart_text puede descartar un mensaje si no cabe en su cola.
+ */
+static void report(uint32_t n)
+{
+    static uint32_t next;
+    char a[48],msg[220]; unsigned int percent=(pwm_target*100U+127)/255;
+    if(!due(n,next)) return;
+    /* Cadencia del informe: prepara diagnóstico SPI y filas LCD; luego encola telemetría con ambas filas y sensores. */
+    next=n+500;
+    snprintf(msg,sizeof(msg),"SPI C=%02X RX=%02X,%02X %s\r\n",debug_cmd,debug_rx0,debug_rx1,link_ok ? "OK":"FALLO");
+    uart_text(msg);
+    if(!ready_sensors) { line(0,"INICIALIZANDO"); line(1,"SENSORES / SPI"); }
+    /* Las alarmas ocupan las filas con el motivo y la acción de recuperación según las condiciones presentes. */
+    else if(state==S_EMERGENCY || state==S_THERMAL || state==S_JAM || state==S_LINK) {
+        line(0,state_name());
+        if(emergency_pressed()) line(1,"LIBERAR EMERG");
+        else if(thermal) line(1,"REVISAR TEMP/NTC");
+        else if(jam_latched && piece) line(1,"LIBERAR LDR");
+        else if(!link_ok || need_sync) line(1,"REVISAR ENLACE");
+        else line(1,"PULSAR START");
+    /* Sin alarma, alterna cada 2 s entre ADC/contador y estado/temperatura/velocidad. */
+    } else if((n/2000)&1) {
+        snprintf(a,sizeof(a),"L%04u N%04u",analog[0],analog[1]); line(0,a);
+        snprintf(a,sizeof(a),"C:%05lu %s",(unsigned long)(count%100000UL),last_command); line(1,a);
+    } else {
+        line(0,state_name());
+        if(sensor_fault) snprintf(a,sizeof(a),"NTC ERROR V%3u%%",percent);
+        else snprintf(a,sizeof(a),"T:%3dC V:%3u%%",temperature(),percent);
+        line(1,a);
+    }
+    snprintf(msg,sizeof(msg),
+        "LCD|%s|%s| EST=%s LDR=%u PIEZA=%u NTC=%u T=%dC POT=%u PWM=%u CNT=%lu CMD=%s SPI=%s\r\n",
+        display[0],display[1],state_name(),analog[0],piece,analog[1],temperature(),
+        analog[2],pwm_target,(unsigned long)count,last_command,link_ok ? "OK":"FALLO");
+    uart_text(msg);
+}
+/* main — Configura el ATmega328P y ejecuta continuamente las tareas cooperativas del maestro.
+ * Entrada: ninguna. Retorno declarado: int; el bucle infinito no retorna. Inicializa watchdog, pines, SPI, ADC, TWI a 100 kHz, UART 9600 8N1 y Timer2 de 1 ms; habilita interrupciones y watchdog de 1 s. Conserva el orden de llamadas para adquirir sensores, evaluar entradas, avanzar SPI, controlar proceso, atender TWI/LCD e informar.
+ */
+int main(void)
+{
+    /* Arranque: limpia la causa de reset y deshabilita el watchdog antes de configurar periféricos. */
+    MCUSR=0; wdt_disable();
+    /* PD2 START y PD3 emergencia son entradas con pull-up interno; los pulsadores se activan a GND. */
+    DDRD&=(uint8_t)~(_BV(PD2)|_BV(PD3)); PORTD|=_BV(PD2)|_BV(PD3);
+    /* SPI: SS, MOSI y SCK como salidas; MISO como entrada. SS se mantiene alto al restaurar el periférico. */
+    DDRB|=_BV(PB2)|_BV(PB3)|_BV(PB5); DDRB&=(uint8_t)~_BV(PB4);
+    PORTB|=_BV(PB2); spi_restore();
+    /* ADC0..2 e I2C: entradas sin pull-up interno; ADC con referencia AVCC y prescaler 128, entradas digitales ADC0..2 deshabilitadas. */
+    DDRC&=(uint8_t)~0x3F; PORTC&=(uint8_t)~0x3F;
+    ADMUX=_BV(REFS0); ADCSRA=_BV(ADEN)|_BV(ADPS2)|_BV(ADPS1)|_BV(ADPS0);
+    DIDR0=_BV(ADC0D)|_BV(ADC1D)|_BV(ADC2D);
+    /* TWI: prescaler 1 y TWBR=72 para 100 kHz con F_CPU=16 MHz; SDA/SCL necesitan pull-ups externos. */
+    TWSR=0; TWBR=72; TWCR=_BV(TWEN); /* I2C 100 kHz */
+    /* UART: divisor 103, modo normal, 9600 baudios aproximados, 8 bits, sin paridad y un bit de parada; recepción habilitada sin procesar comandos. */
+    UBRR0H=0; UBRR0L=103; UCSR0A=0;
+    UCSR0B=_BV(TXEN0)|_BV(RXEN0); UCSR0C=_BV(UCSZ01)|_BV(UCSZ00);
+    /* Timer2 en CTC, prescaler 64 y OCR2A=249: interrupción de comparación cada 1 ms a 16 MHz. */
+    TCCR2A=_BV(WGM21); TCCR2B=_BV(CS22); OCR2A=249; TIMSK2=_BV(OCIE2A);
+    line(0,"INICIALIZANDO"); line(1,"SENSORES / SPI"); lcd.at=50;
+    /* Habilita las interrupciones y el watchdog; cada recorrido del bucle lo reinicia. */
+    sei(); wdt_enable(WDTO_1S);
+    for(;;) {
+        uint32_t n=now_ms(); wdt_reset();
+        /* Orden cooperativo: adquisición, seguridad/entradas, transporte SPI y control; cada tarea conserva su estado entre llamadas. */
+        sensors(n); inputs(n); spi_task(n); control(n);
+        /* Después se atienden I2C, refresco LCD e informes; las esperas se resuelven en llamadas posteriores. */
+        twi_task(n); lcd_task(n); report(n);
+    }
+}
+
