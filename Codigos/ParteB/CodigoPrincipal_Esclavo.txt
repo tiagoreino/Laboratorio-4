@@ -1,0 +1,276 @@
+/*
+ * Banda transportadora - ESCLAVO.
+ * AVR-GCC / ATmega328P / 16 MHz - Microchip Studio.
+ * Control por SPI, motor PWM y piston accionado por servo.
+ */
+#define F_CPU 16000000UL
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <avr/wdt.h>
+#include <util/atomic.h>
+#include <stdint.h>
+
+#define SERVO_HOME_US       1000U
+#define SERVO_EXTEND_US     2000U
+#define SERVO_ADVANCE_MS     650UL
+#define SERVO_RETURN_MS      650UL
+#define LINK_TIMEOUT_MS      600UL
+#define FRAME_TIMEOUT_MS      15UL
+#define MOTOR_DIRECTION_HIGH   1
+#define OUTPUT_ACTIVE_HIGH     1  /* LEDs y buzzer */
+
+/* Codigos del protocolo: se reciben dos bytes [comando|SEQ, valor].
+ * La consulta posterior [0,0] recoge la respuesta ya preparada.
+ * SS debe permanecer bajo para ambos bytes; usar SPI modo 1, MSB primero,
+ * hasta 125 kHz. El protocolo del maestro contempla 1 ms antes del primer
+ * byte, 1 ms entre bytes y 2 ms antes de consultar la respuesta. */
+enum { C_SYNC=1, C_START, C_STOP, C_EMERG, C_PWM, C_PISTON, C_STATUS };
+/* Estados del proceso. Las variables volatile siguientes son compartidas
+ * con las interrupciones; volatile no sustituye las secciones atomicas. */
+enum { STOPPED, RUNNING, ADVANCING, RETURNING };
+static volatile uint32_t ticks;
+static volatile uint8_t rx_count, rx_cmd, pending_cmd, pending_value, pending;
+static volatile uint8_t ack_cmd, ack_value, selected_ack_value, selected;
+static volatile uint8_t spi_reset_request;
+/* Estado inicial detenido y enlace pendiente de SYNC. last_cmd incluye
+ * el bit SEQ: no se compara solo el numero bajo de comando. */
+static uint8_t mode=STOPPED, emergency, link_fault=1, speed;
+static uint8_t last_cmd, last_value, have_last;
+static uint32_t last_link, servo_deadline, frame_started;
+
+/*
+ * Interrupcion del reloj de software: suma un milisegundo a ticks cada
+ * comparacion de Timer2. Solo registra tiempo; las decisiones se toman en main.
+ * Parametros: ninguno (entrada automatica por hardware).
+ * Retorno: ninguno; finaliza mediante el mecanismo de retorno de interrupcion.
+ */
+ISR(TIMER2_COMPA_vect) { ++ticks; }
+/*
+ * Lee el reloj de milisegundos sin que Timer2 interrumpa la copia.
+ * El AVR es de 8 bits y ticks ocupa 32 bits: ATOMIC_BLOCK evita una lectura
+ * parcial y restaura despues el estado previo de las interrupciones.
+ * Parametros: ninguno.
+ * Retorno: instantanea de ticks (uint32_t), con desbordamiento ciclico.
+ */
+static uint32_t now_ms(void)
+{
+    uint32_t n; ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { n=ticks; } return n;
+}
+/*
+ * Comprueba si un plazo ya se alcanzo mediante la diferencia entre tiempos.
+ * Parametros: n = tiempo actual en ms; d = vencimiento en ms.
+ * Retorno: 1 si n alcanzo o supero d; 0 si falta tiempo.
+ * La resta sin signo y su conversion a int32_t permiten comparar alrededor
+ * del desbordamiento del reloj, para plazos separados menos de 2^31 ms.
+ */
+static uint8_t due(uint32_t n, uint32_t d) { return (int32_t)(n-d)>=0; }
+
+/* SS delimita las tramas incluso si el maestro aborta a mitad de byte. */
+/*
+ * Atiende los cambios de SS (PB2), que delimitan cada transaccion SPI.
+ * Con SS alto termina la seleccion, reinicia la recepcion y el periferico,
+ * y precarga el primer byte del ACK. Con SS bajo inicia una nueva recepcion
+ * y guarda el segundo byte de respuesta que se usara durante esa seleccion.
+ * Parametros: ninguno (interrupcion de cambio de pin).
+ * Retorno: ninguno. Comparte variables volatile con SPI_STC y main.
+ */
+ISR(PCINT0_vect)
+{
+    if (PINB & _BV(PB2)) {
+        /* SS alto: descarta la recepcion anterior, incluso si fue interrumpida.
+         * Reiniciar SPE restablece la alineacion y permite precargar el ACK. */
+        selected=0; rx_count=0;
+        SPCR &= (uint8_t)~_BV(SPE);
+        SPCR |= _BV(SPE);
+        SPDR=ack_cmd;
+    } else {
+        /* SS bajo: el primer byte ya fue precargado con SS alto.
+         * Se conserva el valor de respuesta correspondiente a esta seleccion. */
+        selected=1; rx_count=0;
+        selected_ack_value=ack_value;
+        /* El ACK se precarga mientras SS esta alto. */
+    }
+}
+/*
+ * Recoge un byte recibido y prepara el siguiente byte a transmitir.
+ * SPI transmite y recibe simultaneamente: al llegar el comando ya se envio
+ * el primer byte precargado; entonces se carga el segundo byte del ACK.
+ * Al recibir el valor, deposita la orden completa en el buzon pending para
+ * que main la procese. El comando cero consulta la respuesta y no se encola.
+ * Parametros: ninguno (evento de transferencia SPI completada).
+ * Retorno: ninguno. No ejecuta aqui la logica del motor ni del piston.
+ */
+ISR(SPI_STC_vect)
+{
+    uint8_t b=SPDR;
+    if (!selected) { SPDR=0; return; }
+    if (rx_count==0) {
+        /* Primer byte recibido: guardar comando y preparar el segundo del ACK. */
+        rx_cmd=b; rx_count=1; SPDR=selected_ack_value;
+    } else if (rx_count==1) {
+        rx_count=2; SPDR=0;
+        /* Segundo byte recibido: aceptar una nueva orden solo si el buzon
+         * esta libre. Los bytes adicionales de la seleccion no se encolan. */
+        if (rx_cmd!=0 && !pending) {
+            pending_cmd=rx_cmd; pending_value=b; pending=1;
+        }
+    } else { SPDR=0; }
+}
+/*
+ * Actualiza una salida de PORTD segun la polaridad configurada.
+ * Parametros: bit = numero de pin dentro de PORTD; active = estado logico
+ * solicitado (0 inactivo, 1 activo). OUTPUT_ACTIVE_HIGH define la polaridad.
+ * Retorno: ninguno. Se usa para el LED rojo y el buzzer activo.
+ */
+static void output(uint8_t bit, uint8_t active)
+{
+    if (active==OUTPUT_ACTIVE_HIGH) PORTD|=_BV(bit);
+    else PORTD&=(uint8_t)~_BV(bit);
+}
+/*
+ * Detiene la excitacion del motor: desconecta la salida OC0B del Timer0,
+ * fuerza PD5 a nivel bajo y deja OCR0B en cero. Esto evita depender del
+ * comportamiento del PWM en el extremo de ciclo de trabajo cero.
+ * Parametros: ninguno.
+ * Retorno: ninguno. No cambia por si sola mode, speed ni las alarmas.
+ */
+static void motor_off(void)
+{
+    /* Desconectar OC0B evita pulso residual a duty=0. */
+    TCCR0A&=(uint8_t)~(_BV(COM0B1)|_BV(COM0B0));
+    PORTD&=(uint8_t)~_BV(PD5); OCR0B=0;
+}
+/*
+ * Aplica la velocidad almacenada solamente si el estado permite mover
+ * la banda. Fuera de RUNNING, con emergencia, fallo de enlace o velocidad
+ * cero, llama a motor_off. En caso permitido carga OCR0B y conecta OC0B.
+ * Parametros: ninguno; consulta mode, emergency, link_fault y speed.
+ * Retorno: ninguno. speed conserva la consigna incluso con motor detenido.
+ */
+static void motor_apply(void)
+{
+    if (mode!=RUNNING || emergency || link_fault || speed==0) motor_off();
+    else { OCR0B=speed; TCCR0A|=_BV(COM0B1); }
+}
+/*
+ * Lleva la maquina a STOPPED, apaga el motor y ordena al servo volver
+ * a su posicion inicial. OCR1A expresa el pulso en cuentas de 0,5 us.
+ * Parametros: ninguno.
+ * Retorno: ninguno. No borra las alarmas ni espera el movimiento mecanico;
+ * las comprobaciones de main impiden continuar el ciclo previo del piston.
+ */
+static void stop_all(void)
+{
+    mode=STOPPED; motor_off(); OCR1A=SERVO_HOME_US*2U;
+}
+/*
+ * Construye el byte de estado enviado ante C_STATUS.
+ * Parametros: ninguno.
+ * Retorno: mascara uint8_t: bit0 = mode distinto de STOPPED (marcha logica);
+ * bit1 = piston en ADVANCING o RETURNING; bit2 = emergencia enclavada;
+ * bit3 = fallo de enlace. No representa una medicion mecanica del equipo.
+ */
+static uint8_t status(void)
+{
+    return (mode!=STOPPED ? 1:0) |
+           ((mode==ADVANCING || mode==RETURNING) ? 2:0) |
+           (emergency ? 4:0) | (link_fault ? 8:0);
+}
+/*
+ * Publica una respuesta para una transaccion SPI posterior.
+ * Parametros: cmd = comando completo, incluido SEQ; val = eco del valor
+ * o byte de estado; ok = distinto de cero para aceptacion, cero para rechazo.
+ * Retorno: ninguno. Forma 0x80|cmd para ACK o 0xC0|cmd para rechazo.
+ * La actualizacion atomica coordina los dos bytes con las interrupciones;
+ * SPDR se precarga aqui solo si SS esta alto. El ACK informa aceptacion
+ * del software, sin confirmar que el actuador haya completado su recorrido.
+ */
+static void reply(uint8_t cmd, uint8_t val, uint8_t ok)
+{
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        ack_value=val; ack_cmd=(ok ? 0x80:0xC0)|cmd;
+        /* Precargar mientras el esclavo esta deseleccionado. */
+        if (PINB & _BV(PB2)) SPDR=ack_cmd;
+    }
+}
+/*
+ * Valida y ejecuta una orden tomada del buzon SPI, y prepara su respuesta.
+ * Parametros: cmd = comando en bits 0..3 y secuencia SEQ en bit4;
+ * val = dato asociado (velocidad en PWM, cero en las otras ordenes);
+ * n = instante actual en milisegundos usado para enlace y plazos del servo.
+ * Retorno: ninguno. Las ordenes rechazadas generan respuesta negativa.
+ * SYNC detiene y recupera el enlace; STATUS responde y registra el latido.
+ * La pareja completa cmd/val se compara con la ultima aceptada: una
+ * retransmision identica renueva el enlace y devuelve ACK sin repetir accion.
+ * START, STOP, EMERG, PWM y PISTON se resuelven en el switch segun el estado.
+ */
+static void command(uint8_t cmd, uint8_t val, uint32_t n)
+{
+    /* Separar el codigo de comando de SEQ. Los bits 5..7 deben ser cero;
+     * el bit4 se conserva en cmd para reconocer secuencias y formar el ACK. */
+    uint8_t c=cmd&0x0F, ok=1;
+    if ((cmd&0xE0) || c<C_SYNC || c>C_STATUS) {
+        reply(cmd,val,0); return;
+    }
+    /* No aceptar START mientras el pulsador compartido PD3 este a GND.
+     * La parada local tambien se comprueba de forma continua en main. */
+    if(c==C_START && !(PIND&_BV(PD3))) { reply(cmd,val,0); return; }
+    /* SYNC valido se atiende antes de filtrar duplicados. STATUS tambien
+     * tiene su rama propia; las demas ordenes pasan por la comparacion
+     * de la ultima pareja cmd/val antes de llegar al switch. */
+    if (c==C_SYNC && val==0) {
+        /* SYNC valido detiene y limpia el fallo de enlace, pero no borra
+         * emergency. El rearme de emergencia corresponde a un START aceptado. */
+        stop_all(); link_fault=0; last_link=n;
+    } else if (c==C_STATUS && val==0) {
+        last_link=n;
+        /* Tambien avanzar la memoria de secuencia con los latidos: tras
+         * varios latidos, un PISTON nuevo puede reutilizar el bit SEQ. */
+        last_cmd=cmd; last_value=val; have_last=1;
+        reply(cmd,status(),1); return;
+    /* Misma orden, mismo bit SEQ y mismo valor: devolver ACK sin repetir
+     * el movimiento. STATUS actualiza esta memoria en su rama anterior. */
+    } else if (have_last && cmd==last_cmd && val==last_value) {
+        last_link=n; reply(cmd,val,1); return;
+    } else {
+        switch(c) {
+        /* START requiere valor cero y enlace recuperado. Solo desde STOPPED
+         * borra emergency y pasa a RUNNING; en otro estado no reinicia el ciclo. */
+        case C_START:
+            if (val || link_fault) { ok=0; break; }
+            /* START en marcha no debe reiniciar ni cancelar el piston. */
+            if (mode!=STOPPED) break;
+            emergency=0; mode=RUNNING; motor_apply(); break;
+        /* STOP detiene; EMERG ademas enclava la alarma. Soltar el pulsador
+         * no ejecuta START: hace falta una nueva orden de arranque aceptada. */
+        case C_STOP:
+            if (val) { ok=0; break; } stop_all(); break;
+        case C_EMERG:
+            if (val) { ok=0; break; } emergency=1; stop_all(); break;
+        /* La consigna PWM es un byte (0..255); motor_apply decide si se aplica. */
+        case C_PWM: speed=val; motor_apply(); break;
+        /* PISTON solo inicia desde RUNNING sin alarmas y con valor cero.
+         * Apaga la banda, manda extender el servo y fija el plazo de avance. */
+        case C_PISTON:
+            if (val || mode!=RUNNING || emergency || link_fault) { ok=0; break; }
+            mode=ADVANCING; motor_off(); OCR1A=SERVO_EXTEND_US*2U;
+            servo_deadline=n+SERVO_ADVANCE_MS; break;
+        default: ok=0; break;
+        }
+        if (ok) last_link=n;
+    }
+    /* Guardar solo ordenes aceptadas para reconocer retransmisiones futuras. */
+    if (ok) { last_cmd=cmd; last_value=val; have_last=1; }
+    reply(cmd,val,ok);
+}
+/*
+ * Inicializa pines, temporizadores, SPI, interrupciones y watchdog; despues
+ * ejecuta continuamente la supervision local y la maquina de estados.
+ * Parametros: ninguno.
+ * Retorno: tipo int por la firma de entrada de C; el bucle es infinito y
+ * no alcanza un retorno normal.
+ * STOPPED mantiene la parada; RUNNING permite la banda; ADVANCING y
+ * RETURNING temporizan el avance y regreso del piston con el motor apagado.
+ * El programa no espera en bloque los recorridos: sigue atendiendo
+ * emergencia, comunicacion, watchdog e indicadores en cada vuelta.
+ */
