@@ -41,3 +41,124 @@
 
 // Dirección I2C 7 bits, sensor inercial
 #define MPU6050_ADDR    0x68
+
+// Memoria EEPROM
+
+// Asignación variables flotantes en EEPROM, guarda valore calibración
+float EEMEM eeprom_offset_x = 0.0f;
+float EEMEM eeprom_offset_y = 0.0f;
+
+// Variables globales de estado
+
+// Variables modificables dentro de ISR (Interrupciones)
+volatile bool hold_mode = false; // Estado congelación pantalla
+volatile bool flag_calibrar = false; // Flag, activa rutina calibración
+
+// Offsets aplicados a lecturas
+float offset_pitch = 0.0f;
+float offset_roll = 0.0f;
+
+// Ángulos, procesados por filtro digital
+float pitch_filtrado = 0.0f;
+float roll_filtrado = 0.0f;
+
+// Pantalla LCD (4 bits)
+
+// Envía pulso pin Enable, registra datos
+void lcd_enable_pulse(void) {
+	LCD_EN_PORT |= (1 << LCD_EN_PIN);
+	_delay_us(1);
+	LCD_EN_PORT &= ~(1 << LCD_EN_PIN);
+	_delay_us(50);
+}
+
+// Coloca nibble (4 bits) en líneas datos LCD
+void lcd_send_nibble(uint8_t nibble) {
+	if (nibble & 0x01) LCD_D4_PORT |= (1 << LCD_D4_PIN); else LCD_D4_PORT &= ~(1 << LCD_D4_PIN);
+	if (nibble & 0x02) LCD_D5_PORT |= (1 << LCD_D5_PIN); else LCD_D5_PORT &= ~(1 << LCD_D5_PIN);
+	if (nibble & 0x04) LCD_D6_PORT |= (1 << LCD_D6_PIN); else LCD_D6_PORT &= ~(1 << LCD_D6_PIN);
+	if (nibble & 0x08) LCD_D7_PORT |= (1 << LCD_D7_PIN); else LCD_D7_PORT &= ~(1 << LCD_D7_PIN);
+	lcd_enable_pulse();
+}
+
+// Envía byte completo (instrucción o carácter) dividiéndo 2 nibbles
+void lcd_send_byte(uint8_t data, bool is_data) {
+	if (is_data)
+	LCD_RS_PORT |= (1 << LCD_RS_PIN);  // Modo Datos
+	else
+	LCD_RS_PORT &= ~(1 << LCD_RS_PIN); // Modo Comando
+
+	lcd_send_nibble(data >> 4);   // Nibble alto
+	lcd_send_nibble(data & 0x0F); // Nibble bajo
+}
+
+// Inicialización controlador HD44780 del LCD
+void lcd_init(void) {
+	// Configura pines salida
+	LCD_RS_DDR |= (1 << LCD_RS_PIN);
+	LCD_EN_DDR |= (1 << LCD_EN_PIN);
+	LCD_D4_DDR |= (1 << LCD_D4_PIN);
+	LCD_D5_DDR |= (1 << LCD_D5_PIN);
+	LCD_D6_DDR |= (1 << LCD_D6_PIN);
+	LCD_D7_DDR |= (1 << LCD_D7_PIN);
+
+	_delay_ms(50); // Tiempo arranque LCD
+
+// Secuencia inicialización 4 bits
+	LCD_RS_PORT &= ~(1 << LCD_RS_PIN);
+	lcd_send_nibble(0x03);
+	_delay_ms(5);
+	lcd_send_nibble(0x03);
+	_delay_us(150);
+	lcd_send_nibble(0x03);
+	lcd_send_nibble(0x02); // Cambia a modo 4 bits
+
+// Comandos configuración
+	lcd_send_byte(0x28, false); // 2 líneas, fuente 5x8
+	lcd_send_byte(0x0C, false); // Display encendido, cursor apagado
+	lcd_send_byte(0x01, false); // Limpiar pantalla
+	_delay_ms(2);
+	lcd_send_byte(0x06, false); // Auto-incremento de cursor
+}
+
+// Establece posición cursor (columna 0-15, fila 0-1)
+void lcd_set_cursor(uint8_t col, uint8_t row) {
+	uint8_t address = (row == 0) ? (0x80 + col) : (0xC0 + col);
+	lcd_send_byte(address, false);
+}
+
+// Imprime cadena texto en pantalla LCD
+void lcd_print(const char *str) {
+	while (*str) {
+		lcd_send_byte(*str++, true);
+	}
+}
+
+// Comunicaciópn TWI / I2C
+
+// Inicializa puerto I2C/TWI  (frecuencia 100 kHz)
+void i2c_init(void) {
+	// Cálculo: SCL freq = F_CPU / (16 + 2 * TWBR * Prescaler)
+	// Para 100 kHz con F_CPU = 16 MHz: TWBR = 72, Prescaler = 1
+	TWBR = 72;
+	TWSR = 0;  // Prescaler en 1
+	TWCR = (1 << TWEN); // Habilita el módulo TWI
+}
+
+// Envía condición START en bus I2C
+void i2c_start(void) {
+	TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN);
+	while (!(TWCR & (1 << TWINT))); // Espera termine transmisión
+}
+
+// Envía condición STOP en ||5bus I2C
+void i2c_stop(void) {
+	TWCR = (1 << TWINT) | (1 << TWEN) | (1 << TWSTO);
+}
+
+// Escribe un byte en el bus I2C
+void i2c_write(uint8_t data) {
+	TWDR = data; // Carga el byte a transmitir
+	TWCR = (1 << TWINT) | (1 << TWEN);
+	while (!(TWCR & (1 << TWINT))); // Espera finalización
+}
