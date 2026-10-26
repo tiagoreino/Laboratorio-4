@@ -1,0 +1,43 @@
+#define F_CPU 16000000UL // Frecuencia reloj microcontrolador (16 MHz)
+
+// Librerías nativas AVR y C
+#include <avr/io.h> // Registros entrada/salida ATmega2560
+#include <util/delay.h> // Funciones retardo por software
+#include <avr/interrupt.h> // Gestión interrupciones
+#include <avr/eeprom.h> // Manejo memoria EEPROM no volátil
+#include <math.h> // Funciones matemáticas (atan2, fabs, isnan)
+#include <stdbool.h> // Definición tipo dato booleano (true/false)
+#include <stdio.h> // Para dar formato a cadenas en la pantalla LCD
+
+// Definición Pines y componentes
+
+#define WS2812_PIN      PB5 // Pin datos matriz LEDs WS2812B (Pin Digital 11)
+#define WS2812_PORT     PORTB
+#define WS2812_DDR      DDRB
+
+#define BTN_HOLD_PIN    PE4 // Botón congelar lecturas. INT4 (Pin Digital 2)
+#define BTN_CAL_PIN     PE5 // Botón, Calibrar cero. INT5 (Pin Digital 3)
+#define BUZZER_PIN      PH6 // Aactivar Buzzer (Pin Digital 9)
+
+// Definiciones pantalla LCD (Modo 4 bits paralelo)
+#define LCD_RS_PORT     PORTH
+#define LCD_RS_DDR      DDRH
+#define LCD_RS_PIN      PH5 // Pin Digital 8
+#define LCD_EN_PORT     PORTH
+#define LCD_EN_DDR      DDRH
+#define LCD_EN_PIN      PH4 // Pin Digital 7
+#define LCD_D4_PORT     PORTH
+#define LCD_D4_DDR      DDRH
+#define LCD_D4_PIN      PH3 // Pin Digital 6
+#define LCD_D5_PORT     PORTE
+#define LCD_D5_DDR      DDRE
+#define LCD_D5_PIN      PE3 // Pin Digital 5
+#define LCD_D6_PORT     PORTG
+#define LCD_D6_DDR      DDRG
+#define LCD_D6_PIN      PG5 // Pin Digital 4
+#define LCD_D7_PORT     PORTB
+#define LCD_D7_DDR      DDRB
+#define LCD_D7_PIN      PB6 // Pin Digital 12
+
+// Dirección I2C 7 bits, sensor inercial
+#define MPU6050_ADDR    0x68
