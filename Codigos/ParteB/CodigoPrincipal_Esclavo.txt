@@ -274,3 +274,97 @@ static void command(uint8_t cmd, uint8_t val, uint32_t n)
  * El programa no espera en bloque los recorridos: sigue atendiendo
  * emergencia, comunicacion, watchdog e indicadores en cada vuelta.
  */
+ int main(void)
+{
+    /* Limpiar las causas de reset y deshabilitar inicialmente el watchdog.
+     * Se habilita de nuevo al terminar la inicializacion. */
+    MCUSR=0; wdt_disable();
+    /* PD4: direccion; PD5/OC0B: habilitacion PWM del driver;
+     * PD6: rojo; PD7: buzzer activo. PD3: emergencia a GND con pull-up interno.
+     * PB0: verde; PB1/OC1A: servo; PB4: MISO. PB2: SS; PB3: MOSI; PB5: SCK.
+     * SS requiere el pull-up externo de 10 kohm indicado para el montaje.
+     * Motor y servo requieren alimentacion apropiada y masa comun con el AVR;
+     * en un L298N se retira el jumper EN para aplicar el PWM al driver. */
+    DDRD|=_BV(PD4)|_BV(PD5)|_BV(PD6)|_BV(PD7);
+    DDRD&=(uint8_t)~_BV(PD3); PORTD|=_BV(PD3);
+    DDRB|=_BV(PB0)|_BV(PB1)|_BV(PB4);
+    DDRB&=(uint8_t)~(_BV(PB2)|_BV(PB3)|_BV(PB5)); PORTB|=_BV(PB2);
+    if (MOTOR_DIRECTION_HIGH) PORTD|=_BV(PD4); else PORTD&=(uint8_t)~_BV(PD4);
+    /* Timer0: Fast PWM de 8 bits, divisor 64, frecuencia 16 MHz/(64*256)
+     * aprox. 976,56 Hz. OC0B se conecta solo cuando motor_apply lo permite.
+     * La direccion se fija en PD4; el montaje usa IN2 a GND (un solo sentido). */
+    TCCR0A=_BV(WGM00)|_BV(WGM01); TCCR0B=_BV(CS01)|_BV(CS00);
+    /* Timer1: Fast PWM con TOP en ICR1 y divisor 8. Cada cuenta dura
+     * 0,5 us; 40000 cuentas dan un periodo de 20 ms (50 Hz).
+     * OCR1A = microsegundos*2 fija el pulso de OC1A: 1000 us en reposo
+     * y 2000 us extendido. Los plazos de recorrido son de 650 ms por etapa.
+     * Ajustar esos pulsos a la mecanica y mantener tiempos acordes al maestro
+     * si se cambia la configuracion en otro trabajo. */
+    TCCR1A=_BV(COM1A1)|_BV(WGM11);
+    TCCR1B=_BV(WGM13)|_BV(WGM12)|_BV(CS11);
+    ICR1=39999; OCR1A=SERVO_HOME_US*2U;
+    /* Timer2: CTC, divisor 64 y OCR2A=249; cada 250 cuentas transcurre
+     * 1 ms y se ejecuta TIMER2_COMPA_vect. F_CPU describe 16 MHz al compilar;
+     * el reloj fisico y los fusibles deben corresponder a esa frecuencia. */
+    TCCR2A=_BV(WGM21); TCCR2B=_BV(CS22); OCR2A=249; TIMSK2=_BV(OCIE2A);
+    /* SPI esclavo habilitado con interrupcion, CPHA=1 y CPOL=0: modo 1.
+     * DORD=0 transmite MSB primero; el reloj lo proporciona el maestro. */
+    SPCR=_BV(SPE)|_BV(SPIE)|_BV(CPHA); SPDR=0;
+    /* Habilitar interrupcion por cambios de SS para delimitar las tramas. */
+    PCMSK0=_BV(PCINT2); PCICR=_BV(PCIE0);
+    /* Establecer salidas de parada, habilitar interrupciones y activar
+     * watchdog de 1 s. El bucle debe alimentarlo para evitar un reinicio. */
+    stop_all(); sei(); wdt_enable(WDTO_1S);
+    for (;;) {
+        uint32_t n=now_ms(); uint8_t p=0,c=0,v=0;
+        /* Renovar el watchdog en cada pasada del bucle principal. */
+        wdt_reset();
+        /* Parada local por lectura de PD3 en el bucle: no depende de recibir SPI.
+         * Enclava emergency y ordena parada; liberar PD3 no borra esa memoria.
+         * Esta supervision por software no es una parada de emergencia certificada. */
+        if(!(PIND&_BV(PD3))) { emergency=1; stop_all(); }
+        /* Copiar y liberar el buzon sin que la ISR SPI lo cambie a mitad
+         * de la operacion; ejecutar despues command fuera del bloque atomico. */
+        ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            if (pending) { c=pending_cmd; v=pending_value; pending=0; p=1; }
+        }
+        if (p) command(c,v,n);
+        /* Sin orden aceptada o latido durante 600 ms: parar, marcar fallo
+         * e invalidar la memoria de duplicados. Recuperar requiere SYNC y START. */
+        if (!link_fault && (uint32_t)(n-last_link)>=LINK_TIMEOUT_MS) {
+            link_fault=1; have_last=0; stop_all();
+        }
+        /* Medir desde que main observa SS bajo. Si supera 15 ms,
+         * reiniciar SPI, limpiar la recepcion y declarar fallo con parada local.
+         * Al observar SS alto se permite iniciar otra medicion de trama. */
+        if (selected) {
+            if (!spi_reset_request) { frame_started=n; spi_reset_request=1; }
+            if ((uint32_t)(n-frame_started)>FRAME_TIMEOUT_MS) {
+                ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+                    SPCR&=(uint8_t)~_BV(SPE); SPCR|=_BV(SPE);
+                    rx_count=0; SPDR=0;
+                }
+                link_fault=1; have_last=0; stop_all();
+            }
+        } else spi_reset_request=0;
+        /* Maquina de estados sin esperas bloqueantes: al vencer el avance,
+         * ordenar regreso y temporizarlo; al vencer el regreso, volver a RUNNING.
+         * motor_apply vuelve a comprobar alarmas y velocidad antes de mover banda.
+         * Los plazos estiman el recorrido; no hay sensor de posicion del piston. */
+        if (mode==ADVANCING && due(n,servo_deadline)) {
+            OCR1A=SERVO_HOME_US*2U; mode=RETURNING;
+            servo_deadline=n+SERVO_RETURN_MS;
+        } else if (mode==RETURNING && due(n,servo_deadline)) {
+            mode=RUNNING; motor_apply();
+        }
+        /* Rojo y buzzer activos ante emergencia o fallo de enlace.
+         * Verde indica marcha logica sin alarmas, incluido el ciclo del piston;
+         * no garantiza por si mismo que el motor este girando. */
+        output(PD6,emergency || link_fault);
+        output(PD7,emergency || link_fault);
+        if ((mode!=STOPPED && !emergency && !link_fault)==OUTPUT_ACTIVE_HIGH)
+            PORTB|=_BV(PB0);
+        else PORTB&=(uint8_t)~_BV(PB0);
+    }
+}
+
