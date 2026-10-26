@@ -162,3 +162,259 @@ void i2c_write(uint8_t data) {
 	TWCR = (1 << TWINT) | (1 << TWEN);
 	while (!(TWCR & (1 << TWINT))); // Espera finalización
 }
+
+// Lee un byte de bus I2C enviando confirmación (ACK)
+uint8_t i2c_read_ack(void) {
+	TWCR = (1 << TWINT) | (1 << TWEN) | (1 << TWEA);
+	while (!(TWCR & (1 << TWINT))); // Espera, recibir el byte
+	return TWDR;
+}
+
+// Lee último byte del bus I2C sin enviar confirmación (NACK)
+uint8_t i2c_read_nack(void) {
+	TWCR = (1 << TWINT) | (1 << TWEN);
+	while (!(TWCR & (1 << TWINT))); // Espera a recibir el byte
+	return TWDR;
+}
+
+// Control y lectura del sensor
+
+// Inicialización básica de MPU6050
+void mpu6050_init(void) {
+	i2c_start();
+	i2c_write((MPU6050_ADDR << 1) | 0); // Dirección modo Escritura
+	i2c_write(0x6B); // Registro gestión energía 1 (PWR_MGMT_1)
+	i2c_write(0x00); // 0x00 desactivar modo sleep, Encenciende sensor
+	i2c_stop();
+}
+
+// Lectura 3 ejes de Acelerómetro en una sola ráfaga TWI
+void mpu6050_read_accel(int16_t *ax, int16_t *ay, int16_t *az) {
+	i2c_start();
+	i2c_write((MPU6050_ADDR << 1) | 0);
+	i2c_write(0x3B); // Registro base: ACCEL_XOUT_H
+	i2c_start();
+	i2c_write((MPU6050_ADDR << 1) | 1); // Dirección modo Lectura
+
+// Lectura registros de 16 bits uniendo Byte Alto y Byte Bajo
+	*ax = ((int16_t)i2c_read_ack() << 8) | i2c_read_ack();
+	*ay = ((int16_t)i2c_read_ack() << 8) | i2c_read_ack();
+	*az = ((int16_t)i2c_read_ack() << 8) | i2c_read_nack(); // Último byte con NACK
+	i2c_stop();
+}
+
+// Control matriz (tiempos con ensambaldor [asm volatile()])
+
+// Envía bit individual con la temporización requerida (16 MHz)
+inline void ws2812_send_bit(bool bit_val) {
+	if (bit_val) {
+// Envia bit 1, Pulso alto largo (~0.8 µs), bajo corto (~0.45 µs)
+		WS2812_PORT |= (1 << WS2812_PIN); // Pin en alto
+		asm volatile ("nop\n\t" "nop\n\t" "nop\n\t" "nop\n\t" // (cada nop fuerza paussa de 62.5ns (un ciclo relo))
+		"nop\n\t" "nop\n\t" "nop\n\t" "nop\n\t"
+		"nop\n\t" "nop\n\t" "nop\n\t"); // Pausa en alto (envía bit [0.8us])
+		WS2812_PORT &= ~(1 << WS2812_PIN); // Pin en bajo
+		asm volatile ("nop\n\t" "nop\n\t" "nop\n\t" "nop\n\t"); // Pausa cortita
+		} else {
+// Envia bit 0, Pulso alto corto (~0.4 µs), bajo largo (~0.85 µs)
+		WS2812_PORT |= (1 << WS2812_PIN);
+		asm volatile ("nop\n\t" "nop\n\t" "nop\n\t" "nop\n\t");
+		WS2812_PORT &= ~(1 << WS2812_PIN);
+		asm volatile ("nop\n\t" "nop\n\t" "nop\n\t" "nop\n\t"
+		"nop\n\t" "nop\n\t" "nop\n\t" "nop\n\t"
+		"nop\n\t" "nop\n\t" "nop\n\t");
+	}
+}
+
+// Envía byte completo (MSB primero)
+void ws2812_send_byte(uint8_t byte) {
+	for (int8_t i = 7; i >= 0; i--) {
+		ws2812_send_bit((byte >> i) & 0x01);
+	}
+}
+
+// Renderiza único punto activo (X, Y) con color en matriz 8x8 (64 LEDs)
+void update_matrix(uint8_t active_x, uint8_t active_y, uint8_t r, uint8_t g, uint8_t b) {
+	uint8_t target_index = active_y * 8 + active_x; // Convierte coordenadas (X,Y) a índice plano (0-63)
+
+	cli(); // Deshabilita interrupciones, para no alterar los pulso microsegundo del protocolo
+	for (uint8_t i = 0; i < 64; i++) {
+		if (i == target_index) {
+// Orden para matiz WS2812B GRB
+			ws2812_send_byte(g);
+			ws2812_send_byte(r);
+			ws2812_send_byte(b);
+			} else {
+// LEDs restantes apagados
+			ws2812_send_byte(0);
+			ws2812_send_byte(0);
+			ws2812_send_byte(0);
+		}
+	}
+	sei(); // Vuelve a habilitar interrupciones
+	_delay_us(60); // Tiempo RESET (>50 µs) carga color en LEDs
+}
+
+// Interrupción y configuración botones
+
+// Inicialización botones, pull-up, interrupciones externas
+void init_buttons(void) {
+	DDRE &= ~((1 << BTN_HOLD_PIN) | (1 << BTN_CAL_PIN)); // Pines de Entrada
+	PORTE |= (1 << BTN_HOLD_PIN) | (1 << BTN_CAL_PIN);   // Resistencias Pull-up internas
+
+// Configura INT4 e INT5, detectan flancos bajada (al presionar el botón)
+	EICRB |= (1 << ISC41) | (1 << ISC51);
+	EICRB &= ~((1 << ISC40) | (1 << ISC50));
+	EIMSK |= (1 << INT4) | (1 << INT5); // Habilita máscara interrupción para INT4 e INT5
+}
+
+// Rutina Interrupción, Botón 1, Hold
+ISR(INT4_vect) {
+	_delay_ms(20); //
+	if (!(PINE & (1 << BTN_HOLD_PIN))) {
+		hold_mode = !hold_mode; // Alterna estado congelación de pantalla
+	}
+}
+
+// Rutina Interrupción, Botón 2, Calibrar
+ISR(INT5_vect) {
+	_delay_ms(20); // Debouncing por software
+	if (!(PINE & (1 << BTN_CAL_PIN))) {
+		flag_calibrar = true; // Activa bandera calibración,  procesa bucle principal
+	}
+}
+
+// Límites
+
+// Activa pulsación corta buzzer,  al tocar bordes
+void trigger_limit_alert(void) {
+// Genera 100 ciclos de 500 µs = 50 ms de tono a 2000 Hz 
+	for (uint16_t i = 0; i < 100; i++) { // Duración pitido
+		PORTH |= (1 << BUZZER_PIN);  // Enciende Pin 9
+		_delay_us(250);             // Espera 250 µs
+		PORTH &= ~(1 << BUZZER_PIN); // Apaga Pin 9
+		_delay_us(250);             // Espera 250 µs
+	}
+}
+
+// Main
+int main(void) {
+// Configura pines salida para perféricos
+	WS2812_DDR |= (1 << WS2812_PIN);
+	DDRH |= (1 << BUZZER_PIN);
+
+// Inicialización
+	i2c_init();
+	mpu6050_init();
+	init_buttons();
+	lcd_init(); // Inicializa la pantalla LCD
+
+// Lee offsets,  previamente guardados en EEPROM
+	offset_pitch = eeprom_read_float(&eeprom_offset_x);
+	offset_roll = eeprom_read_float(&eeprom_offset_y);
+
+// Valida si EEPROM contenía datos no inicializados
+	if (isnan(offset_pitch)) offset_pitch = 0.0f;
+	if (isnan(offset_roll)) offset_roll = 0.0f;
+
+	sei(); // Habilita interrupciones globales
+
+	int16_t ax, ay, az;
+	bool at_limit_previous = false;
+	char lcd_buffer[17]; // Buffer para crear las líneas de texto del LCD
+
+	while (1) {
+// Calibración
+		if (flag_calibrar) {
+// Muestra mensaje en pantalla avisando que se está realizando la calibración
+			lcd_set_cursor(0, 1);
+			lcd_print("MODO: CALIBRANDO");
+
+// Ajusta offsets acumulando desviación actual
+			offset_pitch = pitch_filtrado + offset_pitch;
+			offset_roll = roll_filtrado + offset_roll;
+
+// Actualiza EEPROM solo si cambian datos
+			eeprom_update_float(&eeprom_offset_x, offset_pitch);
+			eeprom_update_float(&eeprom_offset_y, offset_roll);
+
+// Pausa de 1.5 segundos, visualizar estado pantalla LCD
+			_delay_ms(1500);
+
+			flag_calibrar = false; // Limpia bandera
+		}
+
+// Filtrado y lectura sensor
+// Modo HOLD activo, no lee nuevos datos de sensor
+		if (!hold_mode) {
+			mpu6050_read_accel(&ax, &ay, &az);
+
+// Convierte aceleración a ángulos de inclinación (grados)
+			float raw_pitch = atan2((float)ay, (float)az) * (180.0f / M_PI) - offset_pitch;
+			float raw_roll  = atan2((float)-ax, (float)az) * (180.0f / M_PI) - offset_roll;
+
+// Aplica filtro pasa-bajo (Filtro Exponencial) para eliminar vibraciones
+			float alpha = 0.15f;
+			pitch_filtrado = (alpha * raw_pitch) + ((1.0f - alpha) * pitch_filtrado);
+			roll_filtrado  = (alpha * raw_roll)  + ((1.0f - alpha) * roll_filtrado);
+		}
+
+// Zona muerta
+		float pitch_calc = pitch_filtrado;
+		float roll_calc  = roll_filtrado;
+
+// Inclinación menor a ±3°, se asume nivelado
+		if (fabs(pitch_calc) < 3.0f) pitch_calc = 0.0f;
+		if (fabs(roll_calc) < 3.0f)  roll_calc  = 0.0f;
+
+// Actualización de datos en Pantalla LCD
+		lcd_set_cursor(0, 0);
+		snprintf(lcd_buffer, sizeof(lcd_buffer), "X:%+4.1f Y:%+4.1f ", pitch_calc, roll_calc);
+		lcd_print(lcd_buffer);
+
+		lcd_set_cursor(0, 1);
+		if (hold_mode) {
+			lcd_print("MODO: HOLD      ");
+			} else {
+			lcd_print("MODO: MEDIENDO  ");
+		}
+
+// Aletra acustica de límiet
+// Evalúa si alcanzó o superó límite de ±30°
+		bool at_limit = (fabs(pitch_calc) >= 30.0f || fabs(roll_calc) >= 30.0f);
+		if (at_limit && !at_limit_previous && !hold_mode) {
+			trigger_limit_alert(); // Emite pitido al llegar al borde
+		}
+		at_limit_previous = at_limit;
+
+// Mapeo ángulo a la matriz 8x8
+// Mapea rango [±30°] al rango de índices de LEDs [0, 7]
+		int8_t led_x = (int8_t)(((pitch_calc + 30.0f) / 60.0f) * 7.0f + 0.5f);
+		int8_t led_y = (int8_t)(((roll_calc  + 30.0f) / 60.0f) * 7.0f + 0.5f);
+
+// Limitar valores, no salen del rango 0 a 7
+		if (led_x < 0) led_x = 0;
+		if (led_x > 7) led_x = 7;
+		if (led_y < 0) led_y = 0;
+		if (led_y > 7) led_y = 7;
+
+// Lógica color
+		uint8_t red = 0, green = 0, blue = 0;
+
+		if (pitch_calc == 0.0f && roll_calc == 0.0f) {
+			blue = 150; // Nivelado  (Azul)
+			} else if (fabs(pitch_calc) > fabs(roll_calc) * 1.5f) {
+			red = 150;  // Inclinación  X (Rojo)
+			} else if (fabs(roll_calc) > fabs(pitch_calc) * 1.5f) {
+			green = 150; // Inclinación   Y  (Verde)
+			} else {
+			red = 150; green = 150; // Inclinación Diagonal (Amarillo)
+		}
+
+// Renderizado final en matriz
+		update_matrix((uint8_t)led_x, (uint8_t)led_y, red, green, blue);
+
+		_delay_ms(30); // Refresco constante (~33 Hz)
+	}
+	return 0;
+}
